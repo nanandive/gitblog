@@ -1,0 +1,71 @@
+---
+title: 'Integrating Gemini AI in Web Apps'
+date: '2024-06-10'
+category: 'AI'
+excerpt: 'A deep dive into the Google GenAI SDK and how to build responsive AI features.'
+---
+
+# Integrating Gemini AI
+
+The Gemini API is powerful and easy to use. With the `@google/genai` SDK, you can bring multimodal capabilities to any web app.
+
+## Getting Started
+
+First, install the SDK:
+
+```bash
+npm install @google/genai
+```
+
+## Basic Usage
+
+```typescript
+import { GoogleGenAI } from '@google/genai';
+
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+const response = await ai.models.generateContent({
+  model: 'gemini-2.0-flash',
+  contents: 'Summarize this blog post.',
+});
+
+console.log(response.text);
+```
+
+## Streaming Responses
+
+For a better UX, stream the response token by token:
+
+```typescript
+const stream = await ai.models.generateContentStream({
+  model: 'gemini-2.0-flash',
+  contents: 'Write a haiku about coding.',
+});
+
+for await (const chunk of stream) {
+  process.stdout.write(chunk.text());
+}
+```
+
+## System Instructions
+
+Set the AI's persona with system instructions:
+
+```typescript
+const response = await ai.models.generateContent({
+  model: 'gemini-2.0-flash',
+  systemInstruction: 'You are a helpful terminal assistant. Respond concisely.',
+  contents: prompt,
+});
+```
+
+## Best Practices
+
+1. **Always set temperature** - Lower for factual, higher for creative.
+2. **Use streaming for chat** - Better perceived latency.
+3. **Handle errors gracefully** - The API can timeout or rate limit.
+4. **Sanitize user input** - Prevent prompt injection attacks.
+
+## Conclusion
+
+Real-time interactions like streaming and function calling allow for truly dynamic user experiences. The Gemini API is a game-changer for building AI-powered applications.

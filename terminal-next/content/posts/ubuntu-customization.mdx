@@ -1,0 +1,79 @@
+---
+title: 'My Top 10 Ubuntu Tweaks'
+date: '2024-06-01'
+category: 'Linux'
+excerpt: 'How I turn my stock Ubuntu installation into a powerhouse terminal workstation.'
+---
+
+# My Top 10 Ubuntu Tweaks
+
+Ubuntu is great out of the box, but a few tweaks make it perfect for developers.
+
+## 1. GNOME Tweaks
+
+Essential for changing fonts, themes, and window behavior.
+
+```bash
+sudo apt install gnome-tweaks
+```
+
+## 2. Oh My Zsh
+
+Makes the terminal actually usable with plugins, themes, and autocompletion.
+
+```bash
+sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+```
+
+## 3. Powerlevel10k
+
+The best theme for Zsh. Fast, beautiful, and highly customizable.
+
+```bash
+git clone --depth=1 https://github.com/romkatv/powerlevel10k.git ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k
+```
+
+## 4. Auto-hide Dock
+
+Get more screen real estate by hiding the dock when not in use.
+
+## 5. Night Light
+
+Save your eyes during late-night coding sessions.
+
+Settings → Display → Night Light → Enable
+
+## 6. VS Code as Default Editor
+
+```bash
+sudo update-alternatives --set editor /usr/bin/code
+```
+
+## 7. Better Fonts
+
+Install JetBrains Mono or Fira Code for your terminal and editor.
+
+## 8. Docker Without Sudo
+
+Add yourself to the docker group:
+
+```bash
+sudo usermod -aG docker $USER
+```
+
+## 9. SSH Key Agent
+
+Add to `~/.zshrc`:
+
+```bash
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/id_ed25519
+```
+
+## 10. Clipboard Manager
+
+Install CopyQ for a powerful clipboard history.
+
+---
+
+These tweaks will transform your Ubuntu into a developer powerhouse! 🚀
