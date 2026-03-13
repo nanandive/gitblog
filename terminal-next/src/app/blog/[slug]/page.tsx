@@ -15,16 +15,16 @@ export default function BlogPostPage() {
     if (!post) {
         return (
             <div className="py-20 text-center">
-                <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
-                    Post not found
-                </h1>
-                <button
-                    onClick={() => router.push('/')}
-                    className="mt-4 text-sm underline cursor-pointer border-none bg-transparent"
-                    style={{ color: 'var(--accent)' }}
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                    글을 찾을 수 없습니다.
+                </p>
+                <Link
+                    href="/"
+                    className="text-sm mt-4 inline-block"
+                    style={{ color: 'var(--text-muted)', textDecoration: 'underline' }}
                 >
-                    ← Back to all posts
-                </button>
+                    ← 돌아가기
+                </Link>
             </div>
         );
     }
@@ -33,94 +33,73 @@ export default function BlogPostPage() {
 
     return (
         <motion.article
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-            className="max-w-[var(--max-content)] mx-auto py-8"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.3 }}
+            className="max-w-2xl mx-auto pt-4 pb-16"
         >
-            {/* Back button */}
+            {/* Back */}
             <Link
                 href="/"
-                className="inline-flex items-center gap-1 text-sm mb-8 hover:opacity-60 transition-opacity"
+                className="text-xs hover:opacity-60 transition-opacity"
                 style={{ color: 'var(--text-muted)', textDecoration: 'none' }}
             >
-                ← All Posts
+                ← back
             </Link>
 
-            {/* Header */}
-            <header className="mb-10">
+            {/* Title + Meta */}
+            <header className="mt-8 mb-8">
                 <h1
-                    className="text-3xl sm:text-4xl font-bold tracking-tight leading-tight"
+                    className="text-2xl font-semibold tracking-tight leading-snug"
                     style={{ color: 'var(--text-primary)' }}
                 >
                     {post.title}
                 </h1>
-
-                <div className="mt-4 flex flex-wrap items-center gap-3 text-sm" style={{ color: 'var(--text-muted)' }}>
-                    <time dateTime={post.date} style={{ fontFamily: 'var(--font-jetbrains), monospace' }}>
-                        {new Date(post.date).toLocaleDateString('ko-KR', {
-                            year: 'numeric',
-                            month: 'long',
-                            day: 'numeric',
-                        })}
-                    </time>
-                    <span>·</span>
-                    <span>{post.readingTime || 5} min read</span>
-                    <span>·</span>
-                    <span
-                        className="px-2 py-0.5 rounded-md text-xs"
-                        style={{
-                            color: 'var(--accent)',
-                            backgroundColor: 'color-mix(in srgb, var(--accent) 8%, transparent)',
-                        }}
-                    >
-                        {post.category}
-                    </span>
-                </div>
+                <p
+                    className="mt-2 text-xs"
+                    style={{
+                        color: 'var(--text-muted)',
+                        fontFamily: 'var(--font-jetbrains), monospace',
+                    }}
+                >
+                    {new Date(post.date).toLocaleDateString('ko-KR', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                    })}
+                    {' · '}
+                    {post.readingTime || 5} min read
+                    {' · '}
+                    {post.category}
+                </p>
             </header>
 
-            {/* Separator */}
-            <hr style={{ border: 'none', borderTop: '1px solid var(--border-subtle)', margin: '0 0 2.5rem 0' }} />
-
             {/* Content */}
-            <div className="prose" style={{ whiteSpace: 'pre-wrap', color: 'var(--text-secondary)' }}>
+            <div
+                className="text-sm leading-7"
+                style={{ color: 'var(--text-secondary)', whiteSpace: 'pre-wrap' }}
+            >
                 {post.content}
             </div>
 
-            {/* Related posts (Obsidian-style connections) */}
+            {/* Connected notes */}
             {related.length > 0 && (
-                <section className="mt-16 pt-8" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-                    <h3 className="text-sm font-semibold uppercase tracking-wider mb-4" style={{ color: 'var(--text-muted)' }}>
-                        Connected Notes
-                    </h3>
-                    <div className="space-y-3">
-                        {related.map((relPost) => (
-                            <Link
-                                key={relPost.id}
-                                href={`/blog/${relPost.id}`}
-                                className="block py-2 hover:opacity-60 transition-opacity"
-                                style={{ color: 'var(--text-primary)', textDecoration: 'none' }}
-                            >
-                                <span className="font-medium">{relPost.title}</span>
-                                <span className="ml-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-                                    {relPost.category}
-                                </span>
-                            </Link>
-                        ))}
-                    </div>
-                </section>
+                <div className="mt-14 pt-6" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                    <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>
+                        connected notes
+                    </p>
+                    {related.map((r) => (
+                        <Link
+                            key={r.id}
+                            href={`/blog/${r.id}`}
+                            className="block text-sm py-1 hover:opacity-60 transition-opacity"
+                            style={{ color: 'var(--text-primary)', textDecoration: 'none' }}
+                        >
+                            {r.title}
+                        </Link>
+                    ))}
+                </div>
             )}
-
-            {/* Footer nav */}
-            <div className="mt-16 pt-8 text-center" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-                <Link
-                    href="/"
-                    className="text-sm hover:opacity-60 transition-opacity"
-                    style={{ color: 'var(--text-muted)', textDecoration: 'none' }}
-                >
-                    ← Back to all posts
-                </Link>
-            </div>
         </motion.article>
     );
 }

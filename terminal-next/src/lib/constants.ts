@@ -6,64 +6,120 @@ import { BlogPost, Category, CategoryInfo } from '@/types';
  */
 export const BLOG_POSTS: BlogPost[] = [
     {
-        id: 'intro-to-react',
-        title: 'Modern React with TypeScript',
-        date: '2024-05-15',
-        category: 'Development',
-        excerpt: 'Exploring the latest patterns in React 18 and why TypeScript is essential for modern web applications.',
-        readingTime: 5,
-        relatedPosts: ['gemini-api-guide'],
-        content: `# Modern React with TypeScript
-
-React has evolved significantly. With the introduction of Hooks and now Server Components, the landscape is more exciting than ever.
-
-## Why TypeScript?
-TypeScript provides type safety that catches errors during development rather than at runtime. For large-scale React applications, it's not just a preference; it's a requirement for maintainability.
-
-## Key Takeaways
-1. Functional Components are the standard.
-2. Use useMemo and useCallback judiciously.
-3. Strict mode is your friend.`,
-    },
-    {
-        id: 'ubuntu-customization',
-        title: 'My Top 10 Ubuntu Tweaks',
-        date: '2024-06-01',
-        category: 'Linux',
-        excerpt: 'How I turn my stock Ubuntu installation into a powerhouse terminal workstation.',
-        readingTime: 4,
-        relatedPosts: [],
-        content: `# My Top 10 Ubuntu Tweaks
-
-Ubuntu is great out of the box, but a few tweaks make it perfect.
-
-1. **GNOME Tweaks**: Essential for changing fonts and themes.
-2. **Oh My Zsh**: Makes the terminal actually usable.
-3. **Powerlevel10k**: Best theme for Zsh.
-4. **Auto-hide Dock**: Get more screen real estate.
-5. **Night Light**: Save your eyes during late-night coding sessions.`,
-    },
-    {
-        id: 'gemini-api-guide',
-        title: 'Integrating Gemini AI in Web Apps',
-        date: '2024-06-10',
-        category: 'AI',
-        excerpt: 'A deep dive into the Google GenAI SDK and how to build responsive AI features.',
+        id: 'spring-security-jwt',
+        title: 'Spring Security + JWT 인증 구현하기',
+        date: '2025-03-10',
+        category: 'Spring',
+        excerpt: 'Spring Security 6에서 JWT 기반 인증/인가를 구현하는 방법을 정리합니다.',
         readingTime: 8,
-        relatedPosts: ['intro-to-react'],
-        content: `# Integrating Gemini AI
+        relatedPosts: ['msa-event-driven', 'til-jpa-n-plus-one'],
+        content: `# Spring Security + JWT 인증 구현하기
 
-The Gemini API is powerful and easy to use. With the @google/genai SDK, you can bring multimodal capabilities to any web app.
+Spring Security 6에서 JWT 기반 인증을 구현하는 방법을 정리합니다.
 
-\`\`\`typescript
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-const response = await ai.models.generateContent({
-  model: 'gemini-2.0-flash',
-  contents: 'Summarize this blog post.',
-});
+## SecurityFilterChain 설정
+\`\`\`java
+@Bean
+public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+    return http
+        .csrf(csrf -> csrf.disable())
+        .sessionManagement(s -> s.sessionCreationPolicy(STATELESS))
+        .authorizeHttpRequests(auth -> auth
+            .requestMatchers("/api/auth/**").permitAll()
+            .anyRequest().authenticated())
+        .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
+        .build();
+}
 \`\`\`
 
-Real-time interactions like streaming and function calling allow for truly dynamic user experiences.`,
+## Key Takeaways
+1. SecurityFilterChain으로 필터 체인 구성
+2. JWT 토큰 생성 및 검증 로직 분리
+3. RefreshToken은 Redis에 저장하는 것을 권장`,
+    },
+    {
+        id: 'msa-event-driven',
+        title: 'MSA에서 이벤트 기반 아키텍처 설계',
+        date: '2025-02-20',
+        category: 'Architecture',
+        excerpt: 'Kafka를 활용한 이벤트 기반 마이크로서비스 아키텍처 설계 경험을 공유합니다.',
+        readingTime: 12,
+        relatedPosts: ['spring-security-jwt', 'docker-compose-dev'],
+        content: `# MSA에서 이벤트 기반 아키텍처 설계
+
+Kafka를 활용한 이벤트 드리븐 아키텍처 설계 경험을 공유합니다.`,
+    },
+    {
+        id: 'nextjs-blog-rebuild',
+        title: 'Next.js로 개인 블로그 다시 만들기',
+        date: '2025-03-12',
+        category: 'Frontend',
+        excerpt: '터미널 테마에서 미니멀 화이트 블로그로 리디자인한 과정을 기록합니다.',
+        readingTime: 6,
+        relatedPosts: [],
+        content: `# Next.js로 개인 블로그 다시 만들기
+
+기존 터미널 테마를 벗어나 깔끔한 미니멀 화이트 디자인으로 리빌딩했습니다.`,
+    },
+    {
+        id: 'docker-compose-dev',
+        title: 'Docker Compose로 개발 환경 구축하기',
+        date: '2025-01-15',
+        category: 'DevOps',
+        excerpt: 'Spring Boot + MySQL + Redis를 Docker Compose로 한 번에 띄우는 방법.',
+        readingTime: 5,
+        relatedPosts: ['msa-event-driven'],
+        content: `# Docker Compose로 개발 환경 구축하기
+
+로컬에서 Spring Boot + MySQL + Redis를 Docker Compose로 관리하는 방법을 정리합니다.`,
+    },
+    {
+        id: 'network-tcp-handshake',
+        title: 'TCP 3-way Handshake 쉽게 이해하기',
+        date: '2025-01-08',
+        category: 'CS',
+        excerpt: 'TCP 연결 수립 과정인 3-way handshake를 그림과 함께 설명합니다.',
+        readingTime: 4,
+        relatedPosts: [],
+        content: `# TCP 3-way Handshake 쉽게 이해하기
+
+TCP 연결이 어떻게 수립되는지 단계별로 정리합니다.`,
+    },
+    {
+        id: '2025-q1-retrospective',
+        title: '2025년 1분기 회고',
+        date: '2025-03-01',
+        category: 'Retrospective',
+        excerpt: '1분기 동안 배운 것, 아쉬운 것, 다음 분기 목표를 정리합니다.',
+        readingTime: 7,
+        relatedPosts: [],
+        content: `# 2025년 1분기 회고
+
+1분기를 돌아보며 배운 것과 아쉬운 점을 정리합니다.`,
+    },
+    {
+        id: 'cafe-coding',
+        title: '요즘 자주 가는 코딩 카페 추천',
+        date: '2025-02-10',
+        category: 'Daily',
+        excerpt: '서울에서 코딩하기 좋은 카페 몇 곳을 소개합니다.',
+        readingTime: 3,
+        relatedPosts: [],
+        content: `# 요즘 자주 가는 코딩 카페 추천
+
+코딩하기 좋은 카페를 소개합니다.`,
+    },
+    {
+        id: 'til-jpa-n-plus-one',
+        title: 'TIL: JPA N+1 문제 해결법',
+        date: '2025-03-05',
+        category: 'TIL',
+        excerpt: 'fetch join과 @EntityGraph로 N+1 문제를 해결하는 방법을 빠르게 정리.',
+        readingTime: 2,
+        relatedPosts: ['spring-security-jwt'],
+        content: `# TIL: JPA N+1 문제 해결법
+
+N+1 문제를 해결하는 두 가지 방법을 정리합니다.`,
     },
 ];
 

@@ -46,12 +46,14 @@ export default function GraphPage() {
     // Category colors
     const getCategoryColor = useCallback((category: string, alpha: number = 1): string => {
         const colors: Record<string, string> = {
-            Development: `rgba(37, 99, 235, ${alpha})`,
-            Linux: `rgba(234, 88, 12, ${alpha})`,
-            AI: `rgba(139, 92, 246, ${alpha})`,
-            Design: `rgba(236, 72, 153, ${alpha})`,
-            DevOps: `rgba(20, 184, 166, ${alpha})`,
-            Retrospective: `rgba(107, 114, 128, ${alpha})`,
+            Spring: `rgba(76, 175, 80, ${alpha})`,
+            Architecture: `rgba(156, 39, 176, ${alpha})`,
+            Frontend: `rgba(33, 150, 243, ${alpha})`,
+            DevOps: `rgba(255, 152, 0, ${alpha})`,
+            CS: `rgba(0, 188, 212, ${alpha})`,
+            Retrospective: `rgba(121, 134, 203, ${alpha})`,
+            Daily: `rgba(255, 138, 128, ${alpha})`,
+            TIL: `rgba(255, 215, 64, ${alpha})`,
         };
         return colors[category] || `rgba(107, 114, 128, ${alpha})`;
     }, []);
@@ -249,7 +251,7 @@ export default function GraphPage() {
 
             {/* Legend */}
             <div className="flex flex-wrap gap-4 text-xs" style={{ color: 'var(--text-muted)' }}>
-                {['Development', 'Linux', 'AI', 'Design', 'DevOps'].map((cat) => (
+                {['Spring', 'Architecture', 'Frontend', 'DevOps', 'CS', 'Retrospective', 'Daily', 'TIL'].map((cat) => (
                     <div key={cat} className="flex items-center gap-1.5">
                         <div
                             className="w-3 h-3 rounded-full"

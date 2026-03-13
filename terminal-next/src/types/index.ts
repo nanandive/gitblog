@@ -13,12 +13,14 @@ export interface BlogPost {
 }
 
 export type Category =
-    | 'Development'
-    | 'Linux'
-    | 'AI'
-    | 'Design'
+    | 'Spring'
+    | 'Architecture'
+    | 'Frontend'
     | 'DevOps'
-    | 'Retrospective';
+    | 'CS'
+    | 'Retrospective'
+    | 'Daily'
+    | 'TIL';
 
 export interface CategoryInfo {
     name: Category;
