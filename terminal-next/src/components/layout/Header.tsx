@@ -16,7 +16,7 @@ export const Header: React.FC = () => {
     const { theme, toggleTheme } = useTheme();
 
     return (
-        <header className="w-full max-w-2xl mx-auto px-6 h-14 flex items-center justify-between">
+        <header className="w-full max-w-4xl mx-auto px-6 h-14 flex items-center justify-between">
             {/* Logo */}
             <Link
                 href="/"

@@ -3,7 +3,7 @@ import React from 'react';
 export const Footer: React.FC = () => {
     return (
         <footer
-            className="w-full max-w-2xl mx-auto px-6 py-10 text-xs"
+            className="w-full max-w-4xl mx-auto px-6 py-10 text-xs"
             style={{ color: 'var(--text-muted)' }}
         >
             <div className="flex items-center gap-3">
