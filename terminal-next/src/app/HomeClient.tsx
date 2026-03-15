@@ -8,27 +8,21 @@ import Link from 'next/link';
 /* ===== Side Projects ===== */
 const PROJECTS = [
     {
-        name: 'nanandive blog',
-        desc: 'Next.js 기반 개인 블로그. 공부 기록과 기술 회고.',
-        href: '/',
-        tech: 'Next.js · MDX',
-        emoji: '📝',
+        name: 'GitHub',
+        desc: '공부 기록, 사이드 프로젝트, 오픈소스 기여. 코드로 성장의 흔적을 남깁니다.',
+        href: 'https://github.com/nanandive',
+        tech: 'GitHub',
+        emoji: '🐙',
     },
     {
-        name: 'ticket-service',
-        desc: '대규모 트래픽 환경의 티켓 예매 시스템. Redis + Kafka 활용.',
-        href: 'https://github.com/nanandive/ticket-service',
-        tech: 'Spring Boot · Redis · Kafka',
-        emoji: '🎫',
-    },
-    {
-        name: 'backend-challenge-hub',
-        desc: '백엔드 기술 면접 준비 & 코딩 챌린지 모음.',
-        href: 'https://github.com/nanandive/backend-challenge-hub',
-        tech: 'Java · Spring',
-        emoji: '💪',
+        name: 'DummyTalk 백엔드',
+        desc: '실시간 채팅 + 더미 데이터 기반 소셜 플랫폼. MSA 구조로 설계한 백엔드 서비스.',
+        href: 'https://github.com/nanandive/dummytalk-backend',
+        tech: 'Spring Boot · WebSocket · Redis · Kafka',
+        emoji: '�',
     },
 ];
+
 
 /* ===== Stagger delay util ===== */
 const stagger = (i: number) => ({ delay: i * 0.06, duration: 0.35 });

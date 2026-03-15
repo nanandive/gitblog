@@ -1,11 +1,8 @@
-import { getPostBySlug, getAllPosts } from '@/lib/mdx';
+import { getPostBySlug } from '@/lib/mdx';
 import BlogPostClient from './BlogPostClient';
 import { notFound } from 'next/navigation';
 
-export async function generateStaticParams() {
-    const posts = getAllPosts();
-    return posts.map((post) => ({ slug: post.id }));
-}
+export const dynamic = 'force-dynamic';
 
 export default async function BlogPostPage({ params }: { params: Promise<{ slug: string }> }) {
     const { slug } = await params;

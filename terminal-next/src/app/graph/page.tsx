@@ -25,7 +25,7 @@ export default function GraphPage() {
                 const nodes = posts.map((post, i) => ({
                     id: post.id,
                     title: post.title,
-                    category: post.category,
+                    category: post.category as import('@/types').Category,
                     x: 300 + Math.cos((i / posts.length) * Math.PI * 2) * 120,
                     y: 200 + Math.sin((i / posts.length) * Math.PI * 2) * 120,
                     vx: 0,

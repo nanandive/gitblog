@@ -7,10 +7,14 @@ const nextConfig: NextConfig = {
   // Remove X-Powered-By header for security
   poweredByHeader: false,
 
+  // Mark server-only packages — prevents fs/path being bundled into client
+  serverExternalPackages: ['gray-matter', 'fs', 'path'],
+
   // Image optimization settings
   images: {
     formats: ['image/avif', 'image/webp'],
   },
+
 
   // Configure headers for better security
   async headers() {
