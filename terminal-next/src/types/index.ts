@@ -13,13 +13,9 @@ export interface BlogPost {
 }
 
 export type Category =
-    | 'Spring'
-    | 'Architecture'
-    | 'Frontend'
-    | 'DevOps'
     | 'CS'
-    | 'Retrospective'
-    | 'Daily'
+    | 'Architecture'
+    | 'Spring'
     | 'TIL';
 
 export interface CategoryInfo {
