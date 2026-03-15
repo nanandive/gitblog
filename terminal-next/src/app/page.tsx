@@ -1,7 +1,7 @@
 import { getAllPosts } from '@/lib/mdx';
 import HomeClient from './HomeClient';
 
-export default function HomePage() {
+export default async function HomePage() {
   const posts = getAllPosts();
   return <HomeClient posts={posts} />;
 }

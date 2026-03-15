@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { BLOG_POSTS } from '@/lib/constants';
 import { GraphNode, GraphEdge } from '@/types';
 import { useRouter } from 'next/navigation';
 
@@ -18,30 +17,38 @@ export default function GraphPage() {
     const edgesRef = useRef<GraphEdge[]>([]);
     const animRef = useRef<number>(0);
 
-    // Build graph data
+    // Build graph data from MDX API
     useEffect(() => {
-        const nodes = BLOG_POSTS.map((post, i) => ({
-            id: post.id,
-            title: post.title,
-            category: post.category,
-            x: 300 + Math.cos((i / BLOG_POSTS.length) * Math.PI * 2) * 120,
-            y: 200 + Math.sin((i / BLOG_POSTS.length) * Math.PI * 2) * 120,
-            vx: 0,
-            vy: 0,
-        }));
+        fetch('/api/posts')
+            .then(r => r.json())
+            .then((posts: Array<{ id: string; title: string; category: string; relatedPosts?: string[] }>) => {
+                const nodes = posts.map((post, i) => ({
+                    id: post.id,
+                    title: post.title,
+                    category: post.category,
+                    x: 300 + Math.cos((i / posts.length) * Math.PI * 2) * 120,
+                    y: 200 + Math.sin((i / posts.length) * Math.PI * 2) * 120,
+                    vx: 0,
+                    vy: 0,
+                }));
 
-        const edges: GraphEdge[] = [];
-        BLOG_POSTS.forEach((post) => {
-            post.relatedPosts?.forEach((targetId) => {
-                if (BLOG_POSTS.find((p) => p.id === targetId)) {
-                    edges.push({ source: post.id, target: targetId });
-                }
+                const edges: GraphEdge[] = [];
+                posts.forEach((post) => {
+                    post.relatedPosts?.forEach((targetId) => {
+                        if (posts.find((p) => p.id === targetId)) {
+                            edges.push({ source: post.id, target: targetId });
+                        }
+                    });
+                });
+
+                nodesRef.current = nodes;
+                edgesRef.current = edges;
+            })
+            .catch(() => {
+                // fallback: no data
             });
-        });
-
-        nodesRef.current = nodes;
-        edgesRef.current = edges;
     }, []);
+
 
     // Category colors
     const getCategoryColor = useCallback((category: string, alpha: number = 1): string => {

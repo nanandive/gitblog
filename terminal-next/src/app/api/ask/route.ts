@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
-import { BLOG_POSTS } from '@/lib/constants';
+import { getAllPosts } from '@/lib/mdx';
 import { checkRateLimit, getClientIP, createRateLimitHeaders, cleanupRateLimitStore } from '@/lib/rate-limit';
 import { askRequestSchema, validateRequest, createErrorResponse, ErrorCodes } from '@/lib/validation';
 
@@ -66,7 +66,8 @@ export async function POST(request: NextRequest) {
         // 4. Call Gemini API
         const ai = new GoogleGenAI({ apiKey });
 
-        const blogContext = BLOG_POSTS
+        const posts = getAllPosts();
+        const blogContext = posts
             .map(p => `Post: ${p.title}\nExcerpt: ${p.excerpt}`)
             .join('\n\n');
 
