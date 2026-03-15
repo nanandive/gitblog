@@ -15,10 +15,10 @@ const PROJECTS = [
         emoji: '🐙',
     },
     {
-        name: 'DummyTalk 백엔드',
-        desc: '실시간 채팅 + 더미 데이터 기반 소셜 플랫폼. MSA 구조로 설계한 백엔드 서비스.',
+        name: 'DummyTalk',
+        desc: '실시간 협업 음성 AI 프로젝트. 음성 기반 소통에 AI를 결합한 협업 플랫폼.',
         href: 'https://github.com/nanandive/dummytalk-backend',
-        tech: 'Spring Boot · WebSocket · Redis · Kafka',
+        tech: 'Spring Boot · WebSocket · AI · WebRTC',
         emoji: '�',
     },
 ];
@@ -77,9 +77,9 @@ export default function HomeClient({ posts }: HomeClientProps) {
                             nanandive
                         </h1>
                         <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                            백엔드 개발자. 코드, 아키텍처, 인프라, 그리고
+                            이해될 때까지 파고드는 백엔드 개발자.
                             <br />
-                            만드는 것에 대해 기록합니다.
+                            시스템 설계, 성능, 그리고 왜 그렇게 만들어야 하는지를 기록합니다.
                         </p>
                     </div>
                     <div className="flex items-center gap-3 mt-5">
