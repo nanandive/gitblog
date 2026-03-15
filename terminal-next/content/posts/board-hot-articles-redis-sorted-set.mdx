@@ -1,0 +1,139 @@
+---
+title: "인기글 설계 — 순위 데이터를 어떻게 효율적으로 뽑는가"
+category: "CS"
+excerpt: "인기글 기능을 처음 볼 때는 단순히 좋아요 수 내림차순 정렬이라고 생각했다. 그런데 실시간성, 캐싱, 업데이트 비용을 고려하면 완전히 다른 접근이 필요하다. 대규모 시스템 설계 강의에서 배운 인기글 설계 방법을 정리한다."
+---
+
+"인기글 기능 만들어주세요. 좋아요 순으로 상위 50개."
+
+처음엔 이렇게 짰다.
+
+```sql
+SELECT * FROM articles
+ORDER BY like_count DESC
+LIMIT 50
+```
+
+간단하다. 근데 이게 요청마다 실행된다. 게시글이 10만 개면 매번 풀스캔. 트래픽이 몰릴수록 DB가 고통받는다.
+
+## 인기글의 특성
+
+- 자주 조회된다 (홈 화면이나 메인에 노출)
+- 약간의 지연(delay)이 허용된다 (실시간 정확도가 꼭 필요하지 않음)
+- 업데이트 빈도는 낮다 (순위가 자주 크게 변하지 않음)
+
+이 특성이 설계 방향을 결정한다.
+
+## 접근 1: 주기적 배치 + 캐싱
+
+```java
+@Scheduled(fixedDelay = 300_000)  // 5분마다
+public void updateHotArticles() {
+    List<Article> hotArticles = articleRepository
+        .findTopByOrderByLikeCountDesc(50);
+    
+    // Redis에 캐싱
+    String json = objectMapper.writeValueAsString(hotArticles);
+    redisTemplate.opsForValue().set(
+        "hot-articles", json, Duration.ofMinutes(10)
+    );
+}
+
+// 조회
+public List<Article> getHotArticles() {
+    String cached = redisTemplate.opsForValue().get("hot-articles");
+    if (cached != null) {
+        return objectMapper.readValue(cached, ...);
+    }
+    // 캐시 미스 시 DB 조회
+    return articleRepository.findTopByOrderByLikeCountDesc(50);
+}
+```
+
+단순하고 효과적이다. 하지만 5분마다 DB 풀스캔이 발생한다.
+
+## 접근 2: Redis Sorted Set
+
+Redis의 Sorted Set을 활용하면 실시간에 가까운 순위를 유지할 수 있다.
+
+```java
+// 좋아요 생성 시 Redis Sorted Set 업데이트
+public void increaseLikeCount(Long articleId) {
+    // DB 업데이트
+    articleLikeCountRepository.increase(articleId);
+    
+    // Redis Sorted Set에서 점수 증가 (좋아요 수가 score)
+    redisTemplate.opsForZSet().incrementScore(
+        "hot-articles",
+        articleId.toString(),
+        1.0
+    );
+}
+
+// 상위 50개 인기글 조회 (점수 내림차순)
+public List<Long> getHotArticleIds() {
+    Set<String> topArticleIds = redisTemplate.opsForZSet()
+        .reverseRange("hot-articles", 0, 49);
+    
+    return topArticleIds.stream()
+        .map(Long::parseLong)
+        .collect(Collectors.toList());
+}
+```
+
+Sorted Set의 `ZADD`와 `ZREVRANGE`는 O(log n). 수백만 개의 게시글이 있어도 빠르다.
+
+## 인기글 기간 고려
+
+"최근 7일 인기글"이 필요하다면?
+
+방법 1: `article_id`에 날짜를 포함해서 별도 키로 관리
+
+```java
+String key = "hot-articles:" + LocalDate.now().toString();
+redisTemplate.opsForZSet().incrementScore(key, articleId.toString(), 1.0);
+redisTemplate.expire(key, Duration.ofDays(8));  // 8일 후 자동 삭제
+
+// 7일치 Sorted Set을 ZUNIONSTORE로 합산
+String[] weekKeys = getLast7DaysKeys();
+redisTemplate.opsForZSet().unionAndStore(weekKeys[0], 
+    Arrays.asList(weekKeys).subList(1, 7),
+    "hot-articles-week");
+```
+
+방법 2: 시간 가중치
+
+```java
+// 최근 게시글에 더 높은 가중치
+double score = likeCount * timeDecayFactor(createdAt);
+redisTemplate.opsForZSet().add("hot-articles", articleId.toString(), score);
+```
+
+최근에 좋아요가 많이 눌린 게시글이 순위가 높게 유지된다. 오래된 인기글은 자연스럽게 아래로 내려간다.
+
+## 데이터 정합성
+
+Sorted Set이 DB와 불일치할 수 있다. 서버 재시작 시 정합성 맞추기:
+
+```java
+@EventListener(ApplicationStartedEvent.class)
+public void initHotArticles() {
+    // DB에서 최근 게시글 top 1000개 가져와서 Redis 초기화
+    List<ArticleLikeCount> counts = articleLikeCountRepository
+        .findTopOrdered(1000);
+    
+    for (ArticleLikeCount count : counts) {
+        redisTemplate.opsForZSet().add(
+            "hot-articles",
+            count.getArticleId().toString(),
+            count.getLikeCount().doubleValue()
+        );
+    }
+}
+```
+
+## 회고
+
+인기글을 단순 쿼리로 짜다가 DB 부하 문제를 겪었다. "이거 그냥 캐싱하면 되지 않나"라고 생각했는데 순위가 자주 바뀌는 데이터는 캐시 무효화 전략도 중요하다.
+
+Redis Sorted Set은 순위 데이터에 최적화된 자료구조다. "이 데이터 구조가 어디에 쓰이는지"를 알아야 적재적소에 쓸 수 있다.

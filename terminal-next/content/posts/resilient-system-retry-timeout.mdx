@@ -1,0 +1,152 @@
+---
+title: "Retry와 Timeout — 장애 상황에서 언제 재시도하고 언제 포기할까"
+category: "Architecture"
+excerpt: "외부 API 호출 실패 시무조건 재시도하면 오히려 시스템이 더 힘들어진다. 어떤 예외는 재시도해야 하고, 어떤 예외는 즉시 포기해야 하는지, 그리고 Timeout이 왜 반드시 필요한지 정리한 기록."
+---
+
+외부 결제 API를 호출하다가 실패했다. 어떻게 할까?
+
+처음에는 "그냥 재시도하면 되지"라고 단편적으로 생각했다. 재시도를 무분별하게 넣었다가 더 큰 문제가 생겼다.
+
+## 재시도하면 안 되는 예외가 있다
+
+예외를 구분하지 않으면 재시도가 오히려 해가 된다.
+
+```java
+// 재시도해야 하는 예외 (일시적 오류)
+- 네트워크 타임아웃
+- 일시적 서버 오류 (503 Service Unavailable)
+- 연결 거부 (Connection Refused)
+
+// 재시도하면 안 되는 예외 (영구적 오류)
+- 잘못된 요청 (400 Bad Request) → 재시도해도 계속 실패
+- 인증 실패 (401 Unauthorized) → 재시도해도 계속 실패
+- 리소스 없음 (404 Not Found) → 재시도해도 계속 실패
+- 결제 금액 초과 (비즈니스 오류) → 재시도해도 계속 실패
+```
+
+400 에러에 재시도하면 그냥 계속 실패할 뿐이다. 재시도 횟수만큼 요청이 쌓여서 외부 서비스에 불필요한 부하를 준다.
+
+## Retry 구현 (Resilience4j)
+
+```java
+@Retry(name = "payment-service", fallbackMethod = "processPaymentFallback")
+public void processPayment(PaymentRequest request) {
+    paymentServiceClient.process(request);
+}
+
+public void processPaymentFallback(PaymentRequest request, Exception e) {
+    log.error("Payment failed after retries: {}", e.getMessage());
+    throw new PaymentFailedException("결제 처리에 실패했습니다. 잠시 후 다시 시도해주세요.");
+}
+```
+
+```yaml
+resilience4j:
+  retry:
+    instances:
+      payment-service:
+        max-attempts: 3             # 최대 3번 시도
+        wait-duration: 1s           # 재시도 간격 1초
+        retry-exceptions:           # 이 예외만 재시도
+          - java.net.SocketTimeoutException
+          - org.springframework.web.client.HttpServerErrorException
+        ignore-exceptions:          # 이 예외는 재시도 안 함
+          - com.example.InvalidPaymentException
+          - org.springframework.web.client.HttpClientErrorException
+```
+
+## Exponential Backoff: 재시도 간격을 늘려라
+
+서버가 과부하 상태에서 1초마다 재시도하면?
+
+내 재시도 요청들이 서버 회복을 방해한다. 재시도 간격을 지수적으로 늘리는 것이 Exponential Backoff다.
+
+```yaml
+resilience4j:
+  retry:
+    instances:
+      payment-service:
+        max-attempts: 4
+        wait-duration: 1s
+        enable-exponential-backoff: true    # 1s, 2s, 4s, 8s
+        exponential-backoff-multiplier: 2
+        
+        # Jitter: 다수의 클라이언트가 동시에 재시도하는 걸 방지
+        # 1s → 0.5s~1.5s 사이 랜덤
+        randomized-wait-factor: 0.5
+```
+
+여러 클라이언트가 동시에 실패하면 동시에 재시도하려 한다. Jitter(랜덤 대기)를 추가하면 요청이 분산된다.
+
+## Timeout: 반드시 설정해야 한다
+
+Timeout 없이 외부 API를 호출하면?
+
+외부 API가 응답 없이 멈추면, 내 스레드는 계속 대기한다. 그 스레드를 다른 요청이 사용하지 못한다. 스레드 풀이 소진된다. 전체 서비스가 응답 불능 상태가 된다.
+
+```yaml
+# WebClient Timeout 설정
+spring:
+  webclient:
+    connect-timeout: 3000   # 연결 타임아웃 3초
+    read-timeout: 5000      # 읽기 타임아웃 5초
+```
+
+```java
+// WebClient에서 타임아웃 설정
+HttpClient httpClient = HttpClient.create()
+    .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 3000)
+    .responseTimeout(Duration.ofSeconds(5));
+
+WebClient webClient = WebClient.builder()
+    .clientConnector(new ReactorClientHttpConnector(httpClient))
+    .build();
+```
+
+Timeout이 발생하면 어떻게 처리할까?
+
+```java
+@Retry(name = "payment-service")  
+public void processPayment(PaymentRequest request) {
+    try {
+        paymentServiceClient.process(request);
+    } catch (WebClientResponseException.ServiceUnavailable e) {
+        // 503은 재시도
+        throw new RetryableException(e);
+    } catch (WebClientRequestException e) {
+        if (e.getCause() instanceof TimeoutException) {
+            // 타임아웃은 재시도
+            throw new RetryableException(e);
+        }
+        throw e;
+    }
+}
+```
+
+## Retry vs Circuit Breaker
+
+둘 다 실패에 대응하지만 다르다.
+
+**Retry**: 실패한 개별 요청을 다시 시도한다. 일시적 오류에 효과적.
+
+**Circuit Breaker**: 실패율이 임계값을 넘으면 아예 요청을 차단한다. 연속적인 실패 상황에서 시스템 보호.
+
+조합해서 쓴다. Retry로 일시적 오류를 처리하고, 그래도 계속 실패하면 Circuit Breaker가 발동해서 추가 요청을 막는다.
+
+```java
+// 순서: 요청 → Retry → Circuit Breaker → 외부 서비스
+@CircuitBreaker(name = "payment-service")
+@Retry(name = "payment-service")
+public void processPayment(PaymentRequest request) {
+    paymentServiceClient.process(request);
+}
+```
+
+## 회고
+
+"재시도를 추가하면 더 견고해진다"는 단순한 생각이 실제로는 더 큰 장애를 만들 수 있다.
+
+Retry는 재시도 대상 예외를 정확하게 정의해야 하고, Timeout과 함께 써야 하며, 재시도 간격과 Exponential Backoff를 고려해야 한다. 이 모든 걸 고려하지 않은 재시도는 반쪽짜리다.
+
+장애 허용(Fault Tolerance)은 생각보다 훨씬 세밀한 설계가 필요하다.

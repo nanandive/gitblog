@@ -1,0 +1,163 @@
+---
+title: "Spring & JPA 테스트 — @SpringBootTest vs @DataJpaTest"
+category: "Spring"
+excerpt: "@SpringBootTest를 쓰면 컨텍스트 로딩이 너무 오래 걸려서 @DataJpaTest를 알게 됐다. 레이어별로 다른 테스트 전략을 쓰는 게 왜 중요한지 직접 경험으로 정리했다."
+---
+
+처음에 모든 테스트에 `@SpringBootTest`를 붙였다.
+
+테스트 파일이 늘어날수록 전체 테스트 실행 시간이 5분, 10분으로 늘어났다. 빌드할 때마다 기다리는 시간이 고통이었다.
+
+레이어별로 다른 테스트 방식이 있다는 걸 알게 된 후 테스트 실행 시간이 절반 이하로 줄었다.
+
+## @SpringBootTest — 통합 테스트의 전체 컨텍스트
+
+```java
+@SpringBootTest
+@Transactional
+class OrderIntegrationTest {
+    @Autowired
+    private OrderService orderService;
+    
+    @Test
+    void 주문_생성_통합_테스트() {
+        // 실제 Spring 컨텍스트 전체를 띄움
+        // Service, Repository, DB 모두 실제로 동작
+        Order order = orderService.createOrder(command);
+        assertThat(order.getId()).isNotNull();
+    }
+}
+```
+
+전체 Spring 컨텍스트를 로딩한다. 무겁지만 실제 환경과 가장 유사하다.
+
+**언제 쓸까:**
+- 여러 레이어를 걸치는 통합 테스트
+- 트랜잭션 전파 동작 검증
+- 실제 HTTP 요청/응답 테스트
+
+## @DataJpaTest — Repository만 테스트
+
+```java
+@DataJpaTest
+class OrderRepositoryTest {
+    @Autowired
+    private OrderRepository orderRepository;
+    
+    @Autowired
+    private TestEntityManager em;
+    
+    @Test
+    void 날짜_범위로_주문을_조회한다() {
+        // given
+        LocalDate from = LocalDate.of(2025, 3, 1);
+        LocalDate to = LocalDate.of(2025, 3, 15);
+        
+        em.persist(createOrder(LocalDate.of(2025, 3, 10)));
+        em.persist(createOrder(LocalDate.of(2025, 3, 20))); // 범위 밖
+        em.flush();
+        
+        // when
+        List<Order> orders = orderRepository.findByDateBetween(from, to);
+        
+        // then
+        assertThat(orders).hasSize(1);
+    }
+}
+```
+
+JPA 관련 빈만 로딩한다. 기본적으로 인메모리 H2를 사용해서 빠르다.
+
+**언제 쓸까:**
+- JPQL, QueryDSL 쿼리 검증
+- N+1 문제 테스트
+- 커스텀 Repository 메서드 테스트
+
+## @WebMvcTest — Controller만 테스트
+
+```java
+@WebMvcTest(OrderController.class)
+class OrderControllerTest {
+    @Autowired
+    private MockMvc mockMvc;
+    
+    @MockBean
+    private OrderService orderService; // Service는 Mock
+    
+    @Test
+    void 주문_생성_API_테스트() throws Exception {
+        // given
+        given(orderService.createOrder(any()))
+            .willReturn(testOrder());
+        
+        // when & then
+        mockMvc.perform(post("/api/orders")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.id").exists());
+    }
+}
+```
+
+MVC 관련 빈만 로딩. Service는 Mock으로 대체.
+
+**언제 쓸까:**
+- URL 매핑 검증
+- 요청/응답 직렬화 검증
+- 인증/인가 처리 검증
+- HTTP 상태 코드 검증
+
+## Testcontainers — 실제 DB로 테스트
+
+H2는 편리하지만 MySQL과 동작이 다른 경우가 있다. 실제 MySQL로 테스트하고 싶다면:
+
+```java
+@DataJpaTest
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@Testcontainers
+class OrderRepositoryIntegrationTest {
+    @Container
+    static MySQLContainer<?> mysql = new MySQLContainer<>("mysql:8.0");
+    
+    @DynamicPropertySource
+    static void configureProperties(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", mysql::getJdbcUrl);
+        registry.add("spring.datasource.username", mysql::getUsername);
+        registry.add("spring.datasource.password", mysql::getPassword);
+    }
+    
+    @Test
+    void MySQL_함수를_사용하는_쿼리_테스트() {
+        // MySQL 실제 환경에서 테스트
+    }
+}
+```
+
+도커가 필요하지만, 실제 DB 동작과 동일한 환경에서 테스트할 수 있다.
+
+## 테스트 피라미드 전략
+
+```
+        /-------\
+       /  E2E    \   (적게, 느림)
+      /-----------\
+     / Integration \  (중간, 보통)
+    /---------------\
+   /   Unit Tests    \ (많이, 빠름)
+  /-------------------\
+```
+
+- **단위 테스트**: 비즈니스 로직, 빠름, Mock 활용
+- **통합 테스트**: Repository, API, 중간 속도
+- **E2E 테스트**: 전체 시나리오, 느림, 적게
+
+실제 적용한 결과:
+```
+Before: @SpringBootTest만 사용 → 전체 테스트 8분
+After: 레이어별 테스트 분리 → 전체 테스트 2분 30초
+```
+
+속도보다 더 중요한 건 각 테스트가 **자신의 역할에 집중**하게 됐다는 것이다. 컨트롤러 테스트에서 DB를 검증하거나, Repository 테스트에서 비즈니스 로직을 검증하는 일이 사라졌다.
+
+테스트 코드도 SRP(단일 책임 원칙)가 필요하다.

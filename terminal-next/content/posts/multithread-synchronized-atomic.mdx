@@ -1,0 +1,145 @@
+---
+title: "ETL 시스템에서 만난 멀티쓰레드 — synchronized가 다가 아니다"
+category: "CS"
+excerpt: "대규모 ETL 파이프라인 개발 중 멀티쓰레드에서 데이터 유실이 생겼다. synchronized를 붙이면 해결될 줄 알았는데 오히려 성능이 더 나빠졌다. volatile, Lock, 그리고 올바른 Critical Section 범위에 대해 고민한 기록."
+---
+
+회사에서 ETL 시스템을 개발하면서 멀티쓰레드 문제를 처음 제대로 마주쳤다.
+
+여러 쓰레드가 동시에 카운터를 증가시키는 로직에서 최종 값이 기대값보다 항상 작게 나왔다. *lost update* 문제였다.
+
+`synchronized` 붙이면 되겠지 했는데, 생각보다 복잡했다.
+
+## 왜 i++이 안전하지 않은가
+
+```java
+// 단순해 보이지만 실제로는 3단계 연산
+counter++;
+
+// 1. 메모리에서 값 읽기: temp = counter (현재 값 5)
+// 2. 연산: temp = temp + 1 (6)
+// 3. 메모리에 쓰기: counter = temp (6)
+```
+
+쓰레드 A와 B가 동시에 counter=5인 상태에서 실행하면:
+
+```
+Thread A: 읽기(5) → 연산(6) → ...잠깐 대기...
+Thread B: 읽기(5) → 연산(6) → 쓰기(6)
+Thread A: ...쓰기(6)
+```
+
+두 쓰레드가 +1을 했는데 결과는 7이 아니라 6. **Atomic하지 않은 연산**이기 때문이다.
+
+## volatile — 가시성(Visibility) 문제 해결
+
+CPU마다 캐시가 있다. 쓰레드 A가 값을 바꿔도 쓰레드 B가 보는 값은 캐시에서 읽은 옛날 값일 수 있다.
+
+```java
+// volatile 없으면 다른 쓰레드의 변경이 즉시 보이지 않을 수 있음
+private static boolean running = true;
+
+// volatile 추가 → 항상 메인 메모리에서 최신 값 읽음
+private static volatile boolean running = true;
+```
+
+`volatile`은 가시성은 해결하지만, **원자성(Atomicity)은 보장하지 않는다**.
+
+```java
+// volatile로는 이 문제 해결 안 됨
+private static volatile int counter = 0;
+counter++; // 여전히 비원자적
+```
+
+## synchronized — 원자성 보장
+
+```java
+private static int counter = 0;
+private static final Object lock = new Object();
+
+void increment() {
+    synchronized (lock) { // lock 객체로 임계 영역(Critical Section) 설정
+        counter++; // 한 번에 한 쓰레드만 실행
+    }
+}
+```
+
+`synchronized` 블록은 **Exclusive Lock** 이다. 한 쓰레드가 들어가면 나올 때까지 다른 쓰레드는 대기한다.
+
+**`synchronized`는 자동으로:**
+- 원자성 (한 쓰레드만 실행)
+- 가시성 (메모리 베리어 포함)
+- 순서 보장 (재정렬 방지)
+
+을 제공한다.
+
+## Critical Section 범위가 중요하다
+
+내가 처음 범한 실수:
+
+```java
+// 너무 큰 임계 영역 — 성능 저하
+synchronized (lock) {
+    int data = fetchDataFromDB(); // DB 조회가 락 안에?!
+    process(data);
+    counter++;
+}
+```
+
+DB 조회는 수백 ms가 걸릴 수 있다. 그동안 다른 쓰레드가 전부 대기 중이다.
+
+**락 안에는 최소한의 코드만:**
+
+```java
+// DB 조회는 락 밖에서
+int data = fetchDataFromDB();
+int processed = process(data);
+
+// 공유 자원 접근만 락 안에서
+synchronized (lock) {
+    counter += processed; // 빠른 연산만
+}
+```
+
+락 구간에 I/O(`File`, `Network`, `DB`)가 들어가면 병목이 생긴다. 반드시 밖으로 뺀다.
+
+## AtomicInteger — 더 나은 선택
+
+단순 카운터라면 `synchronized`보다 `AtomicInteger`가 낫다:
+
+```java
+private static AtomicInteger counter = new AtomicInteger(0);
+
+// CAS(Compare And Swap) 연산으로 락 없이 원자성 보장
+counter.incrementAndGet(); // 락 없이 안전
+```
+
+CAS는 락을 걸지 않고 CPU 명령어 레벨에서 원자성을 보장한다. 경합이 적을 때 `synchronized`보다 훨씬 빠르다.
+
+## 실제 ETL 시스템 적용
+
+문제가 되던 코드:
+```java
+// 여러 쓰레드가 동시에 processedCount++
+private int processedCount = 0;
+
+void processRecord(Record record) {
+    process(record);
+    processedCount++; // 위험!
+}
+```
+
+수정:
+```java
+// AtomicInteger로 교체
+private AtomicInteger processedCount = new AtomicInteger(0);
+
+void processRecord(Record record) {
+    process(record);
+    processedCount.incrementAndGet(); // 안전
+}
+```
+
+이후 수백만 건 처리 후에도 카운트가 정확하게 나왔다.
+
+멀티쓰레드 버그의 무서운 점은 **항상 재현되지 않는다**는 것이다. 조건이 맞을 때만 발생한다. 제대로 된 동기화 없이는 언제 터질지 모르는 시한폭탄이다.

@@ -1,0 +1,123 @@
+---
+title: "Circuit Breaker — 서비스 장애를 다른 서비스로 전파하지 않는 방법"
+category: "Architecture"
+excerpt: "외부 서비스가 느려지면 왜 우리 서비스도 같이 죽는지 이해하고, Circuit Breaker 패턴으로 어떻게 막는지 Resilience4j 실습 경험을 바탕으로 정리했다."
+---
+
+외부 결제 API를 동기 호출하고 있는 서비스가 있었다. 결제 API가 느려지면 어떻게 됐을까?
+
+결제 API 응답을 기다리는 스레드들이 쌓인다. 스레드 풀이 소진된다. 다른 요청들이 대기에 걸린다. 결국 결제와 전혀 무관한 조회 기능까지 응답이 느려진다.
+
+이게 **장애 전파(Failure Propagation)** 다.
+
+## Circuit Breaker가 하는 일
+
+회로 차단기(Circuit Breaker). 이름 그대로 회로를 끊는다.
+
+외부 서비스가 비정상이면 → 그 서비스로 가는 요청을 차단한다. 서비스가 회복하면 → 다시 요청을 흘려보낸다.
+
+세 가지 상태가 있다:
+
+```
+[CLOSED] → 정상. 트래픽이 흐름
+    ↓ 실패율이 임계값 초과
+[OPEN] → 차단. 트래픽이 막힘
+    ↓ 일정 시간 후
+[HALF_OPEN] → 점검. 일부 요청을 흘려서 회복 여부 확인
+    ↓ 성공하면        ↓ 실패하면
+[CLOSED]           [OPEN]
+```
+
+헷갈리는 포인트: Open이 차단, Closed가 정상이다. 회로가 열리면(Open) 전류가 흐르지 않는 것과 같다.
+
+## Resilience4j 적용
+
+```java
+// Circuit Breaker 적용
+@CircuitBreaker(name = "mail-service", fallbackMethod = "sendMailFallback")
+public void sendMail(String email) {
+    webClient.post()
+        .uri("/mail/send")
+        .bodyValue(new MailRequest(email))
+        .retrieve()
+        .bodyToMono(String.class)
+        .block();
+}
+
+// 서킷이 OPEN일 때 호출되는 fallback
+public void sendMailFallback(String email, Exception e) {
+    log.warn("Mail service unavailable. Email queued for retry: {}", email);
+    // 이메일 재시도 큐에 적재
+    emailRetryQueue.add(email);
+}
+```
+
+```yaml
+# application.yml 설정
+resilience4j:
+  circuitbreaker:
+    instances:
+      mail-service:
+        # 어떤 예외를 실패로 간주할지
+        record-exception: com.example.MailServiceException
+        
+        # 요청 10건 중 30% 실패하면 OPEN
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        failure-rate-threshold: 30
+        
+        # 최소 5건은 수집해야 임계값 적용
+        minimum-number-of-calls: 5
+        
+        # OPEN 상태 지속 시간 (이후 HALF_OPEN)
+        wait-duration-in-open-state: 10s
+        
+        # HALF_OPEN에서 테스트할 요청 수
+        permitted-number-of-calls-in-half-open-state: 3
+```
+
+## 왜 HALF_OPEN이 필요한가
+
+OPEN에서 CLOSED로 바로 전환하면 안 될까?
+
+시스템이 충분히 회복됐는지 확인하지 않고 갑자기 전체 트래픽을 보내면, 아직 불안정한 서비스가 다시 과부하를 받을 수 있다.
+
+HALF_OPEN에서는 일부 요청(3건)만 흘려보내서 성공하면 CLOSED로, 실패하면 다시 OPEN으로 돌아간다.
+
+OPEN → CLOSED 조건을 훨씬 엄격하게 설정해야 하는 이유도 여기에 있다. 이미 한번 오픈된 상황에서 테스트는 빡빡하게 통과해야 안전하다.
+
+## Fallback과 Graceful Degradation
+
+서킷이 열렸을 때 그냥 에러를 내면 사용자 경험이 나쁘다. Fallback으로 대체 동작을 제공한다.
+
+```java
+// 이메일 발송 실패 시 → 인앱 알림으로 대체
+public void sendMailFallback(String email, Exception e) {
+    if (e instanceof CallNotPermittedException) {
+        // 서킷이 OPEN 상태
+        log.warn("Circuit OPEN. Falling back to in-app notification");
+        notificationService.sendInAppNotification(email);
+    } else {
+        // 실제 실패
+        log.error("Mail send failed", e);
+    }
+}
+```
+
+핵심 기능은 살리고, 부가 기능은 degradation하는 것이 Graceful Degradation이다. 이메일 발송 실패해도 서비스 전체가 죽으면 안 된다.
+
+## 주의점: 멱등성
+
+서킷이 열렸다가 Fallback으로 재시도 큐에 이메일을 넣었다. 나중에 서킷이 닫히면서 재시도가 실행된다. 그런데 사실 원래 요청이 이미 처리됐을 수도 있다. (요청 대기 큐에 있다가 뒤늦게 처리된 경우)
+
+이러면 이메일이 두 번 발송된다.
+
+멱등성(Idempotency) 보장이 필요하다. 이메일 요청에 고유한 `idempotencyKey`를 붙이고, 이미 처리된 키면 스킵하는 방식이 일반적이다.
+
+## 회고
+
+Circuit Breaker를 알기 전에는 "타임아웃을 짧게 설정하면 되지 않나?"라고 생각했다.
+
+타임아웃만으로는 부족하다. 타임아웃이 발생해도 계속 재시도하면 결국 같은 문제가 반복된다. Circuit Breaker는 임계값 이상 실패하면 아예 호출을 차단해서 시스템 전체가 숨 쉴 수 있는 시간을 만든다.
+
+분산 시스템에서 서비스 간 의존은 불가피하다. 그 의존이 장애 전파로 이어지지 않으려면 Circuit Breaker 같은 방어 메커니즘이 필수다.

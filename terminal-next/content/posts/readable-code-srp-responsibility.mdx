@@ -1,0 +1,129 @@
+---
+title: "SOLID 원칙을 이해하기까지 — SRP부터 시작하는 클린 코드 여정"
+category: "TIL"
+excerpt: "SOLID를 외웠는데 코드에 적용할 줄 몰랐다. Readable Code 강의를 보면서 지뢰찾기 게임 리팩토링으로 SRP가 뭔지 실제로 이해했다. 그 과정을 기록한다."
+---
+
+SOLID는 외웠다. Single Responsibility, Open-Closed, Liskov Substitution, Interface Segregation, Dependency Inversion.
+
+근데 코드를 짤 때 실제로 어떻게 적용하는지 몰랐다. 그냥 추상적인 원칙으로만 알고 있었다.
+
+강의에서 지뢰찾기 게임 코드를 직접 리팩토링하면서 처음으로 "아, 이말이 이거였구나"를 느꼈다.
+
+## SRP: 단일 책임 원칙
+
+> 하나의 클래스는 단 한 가지의 변경 이유만을 가져야 한다.
+
+처음엔 이 말이 너무 추상적이었다. '책임'이 뭔데?
+
+강의에서 나온 표현이 더 와닿았다: **하나의 클래스가 가진 공개 메서드, 필드, 상수들이 단일 책임에 의해서만 변경되는가.**
+
+### 지뢰찾기 게임 예시
+
+리팩토링 전 `MineSweeper` 클래스:
+
+```java
+public class MineSweeper {
+    // 게임 로직
+    // 보드 출력 (콘솔)
+    // 사용자 입력 처리
+    // 게임 상태 관리
+    // ...수백 줄
+}
+```
+
+이 클래스가 변경될 이유가 몇 가지일까?
+- 게임 로직이 바뀔 때
+- 출력 형태가 바뀔 때 (콘솔 → GUI)
+- 입력 방식이 바뀔 때 (키보드 → 마우스)
+
+세 가지 이상이다. SRP 위반이다.
+
+### 리팩토링
+
+```java
+// 1. GameApplication: 게임 진입점만 담당
+public class GameApplication {
+    public static void main(String[] args) {
+        new MineSweeper().run();
+    }
+}
+
+// 2. MineSweeper: 게임 도메인 로직만 담당
+public class MineSweeper {
+    private final ConsoleInputHandler inputHandler = new ConsoleInputHandler();
+    private final ConsoleOutputHandler outputHandler = new ConsoleOutputHandler();
+    private final GameBoard gameBoard;
+    
+    public void run() { ... }
+}
+
+// 3. ConsoleInputHandler: 입력만 담당
+public class ConsoleInputHandler {
+    private final Scanner scanner = new Scanner(System.in);
+    
+    public String getUserInput() {
+        return scanner.nextLine();
+    }
+}
+
+// 4. ConsoleOutputHandler: 출력만 담당
+public class ConsoleOutputHandler {
+    public void showBoard(GameBoard board) { ... }
+    public void printGameWinningComment() { ... }
+    public void printExceptionMessage(Exception e) { ... }
+}
+
+// 5. GameBoard: 게임판 데이터와 로직만 담당
+public class GameBoard {
+    private final Cell[][] board;
+    
+    public void initialize() { ... }
+    public void flag(int rowIndex, int colIndex) { ... }
+    public void open(int rowIndex, int colIndex) { ... }
+    public boolean isLandmineCell(int rowIndex, int colIndex) { ... }
+}
+```
+
+이제 각 클래스의 변경 이유가 하나씩이다.
+
+- `ConsoleOutputHandler`의 변경 이유: "화면에 어떻게 출력할지가 바뀔 때"
+- `GameBoard`의 변경 이유: "게임판 데이터 구조나 규칙이 바뀔 때"
+
+출력 로직이 바뀐다고 게임 로직이 영향받지 않는다.
+
+## 높은 응집도, 낮은 결합도
+
+SRP를 지키면 자연스럽게 이 두 가지가 따라온다.
+
+**응집도 (Cohesion)**: 클래스 내 요소들이 하나의 주제로 긴밀하게 연결된 정도.
+
+`GameBoard` 안의 모든 메서드(`initialize`, `flag`, `open`, `isLandmineCell`)는 다 "게임판"이라는 주제와 연결되어 있다. 응집도가 높다.
+
+**결합도 (Coupling)**: 두 객체 간 의존성.
+
+`MineSweeper`는 `ConsoleOutputHandler`의 구체적인 출력 로직을 모른다. 그냥 `outputHandler.showBoard(gameBoard)`라고 요청만 한다. 결합도가 낮다.
+
+## 책임의 경계는 어디에?
+
+가장 어려운 것이 "이 책임이 어디까지인가"다.
+
+예를 들어 상수 하나가 있다. A 클래스와 B 클래스 둘 다 이 상수를 쓴다. 어디에 두어야 하는가?
+
+- A에 두고 B가 A를 참조?
+- B에 두고 A가 B를 참조?
+- 제3의 클래스 C에 두고 둘 다 C를 참조?
+
+정답이 없다. 이 상수가 어느 클래스의 책임과 더 자연스럽게 연결되느냐를 끊임없이 질문해야 한다.
+
+강의에서 인상 깊었던 말:
+
+> "책임을 볼 줄 아는 눈은 경험의 영역이다. 계속 질문하고 리팩토링하면서 쌓인다."
+
+## 회고
+
+SRP를 문서로 읽을 때: 이해함. 코드에 적용할 때: 막막함.
+
+결국 직접 큰 클래스를 쪼개보는 것 외에 방법이 없었다. 처음 분리하면 어색하고 오히려 복잡해 보이지만, 나중에 변경이 생겼을 때 "딱 이 파일만 수정하면 되는구나"를 경험하면서 체감이 된다.
+
+코드 리뷰 받을 때 "이 클래스가 너무 많은 일을 하는 것 같다"는 피드백을 받았는데, 그때는 이유를 몰랐다. 이제는 그 피드백이 무슨 뜻인지 이해한다.

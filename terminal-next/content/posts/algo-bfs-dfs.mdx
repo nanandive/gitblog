@@ -1,0 +1,171 @@
+---
+title: "BFS/DFS — 그래프 탐색의 두 갈래, 언제 어느 것을 쓰는가"
+category: "TIL"
+excerpt: "BFS와 DFS를 둘 다 배웠는데 실전에서 어떤 상황에 어느 것을 써야 하는지 헷갈렸다. 코딩테스트 준비하면서 직접 문제를 풀면서 정리한 기준."
+---
+
+BFS와 DFS, 둘 다 그래프 탐색이다. 구현도 비슷해 보인다.
+
+실전에서 어느 것을 쓸지 판단하는 데 익숙해지기까지 꽤 걸렸다. 정리해두는 게 좋겠다고 생각했다.
+
+## BFS (Breadth-First Search) — 너비 우선 탐색
+
+```python
+from collections import deque
+
+def bfs(graph, start):
+    visited = set([start])
+    queue = deque([start])
+    
+    while queue:
+        node = queue.popleft()
+        print(node)
+        
+        for neighbor in graph[node]:
+            if neighbor not in visited:
+                visited.add(neighbor)
+                queue.append(neighbor)
+```
+
+큐를 사용한다. 현재 노드와 가까운 노드부터 탐색한다.
+
+**BFS를 쓰는 상황:**
+- **최단 거리/최단 경로** → BFS는 현재 레벨을 다 탐색하고 다음 레벨로 간다. 처음 목적지에 도달했을 때가 최단 거리다.
+- 레벨별 탐색이 필요할 때
+
+## DFS (Depth-First Search) — 깊이 우선 탐색
+
+```python
+def dfs(graph, node, visited=None):
+    if visited is None:
+        visited = set()
+    visited.add(node)
+    print(node)
+    
+    for neighbor in graph[node]:
+        if neighbor not in visited:
+            dfs(graph, neighbor, visited)
+    
+    return visited
+```
+
+재귀 또는 스택을 사용한다. 한 방향으로 끝까지 들어갔다가 되돌아온다.
+
+```python
+# 반복문으로 DFS (스택)
+def dfs_iterative(graph, start):
+    visited = set()
+    stack = [start]
+    
+    while stack:
+        node = stack.pop()
+        if node not in visited:
+            visited.add(node)
+            print(node)
+            stack.extend(graph[node])
+```
+
+**DFS를 쓰는 상황:**
+- 경로 존재 여부 확인
+- 모든 경우의 수 탐색 (완전 탐색)
+- 백트래킹과 함께 쓸 때
+- 사이클 감지
+
+## 실전 기준 정리
+
+```
+최단 거리/경로   → BFS
+모든 경우 탐색   → DFS (+ 백트래킹)
+미로 탈출 가능?  → BFS 또는 DFS 모두 가능
+연결 컴포넌트   → DFS 또는 BFS 모두 가능
+트리 순회       → DFS (전위/중위/후위)
+```
+
+## BFS 실전 예시: 미로 최단 거리
+
+```python
+def min_distance(maze, start, end):
+    rows, cols = len(maze), len(maze[0])
+    directions = [(0,1), (0,-1), (1,0), (-1,0)]
+    
+    queue = deque([(start[0], start[1], 0)])  # (row, col, distance)
+    visited = {start}
+    
+    while queue:
+        row, col, dist = queue.popleft()
+        
+        if (row, col) == end:
+            return dist
+        
+        for dr, dc in directions:
+            nr, nc = row + dr, col + dc
+            if 0 <= nr < rows and 0 <= nc < cols \
+               and maze[nr][nc] != '#' \
+               and (nr, nc) not in visited:
+                visited.add((nr, nc))
+                queue.append((nr, nc, dist + 1))
+    
+    return -1  # 도달 불가
+```
+
+BFS는 레벨(거리)을 보장하므로, 목적지에 처음 도달했을 때의 `dist`가 곧 최단 거리다.
+
+## DFS 실전 예시: 모든 경로 탐색 (백트래킹)
+
+```python
+def find_all_paths(graph, start, end):
+    all_paths = []
+    
+    def dfs(node, path, visited):
+        if node == end:
+            all_paths.append(path[:])
+            return
+        
+        for next_node in graph[node]:
+            if next_node not in visited:
+                visited.add(next_node)
+                path.append(next_node)
+                dfs(next_node, path, visited)
+                path.pop()         # 백트래킹
+                visited.remove(next_node)
+    
+    dfs(start, [start], {start})
+    return all_paths
+```
+
+백트래킹은 선택을 되돌리는 것이다. `path.pop()`과 `visited.remove()`로 이전 상태로 돌아간다.
+
+## 다익스트라와 BFS의 차이
+
+BFS는 모든 엣지 비용이 동일할 때 최단 거리를 구한다. 엣지 비용이 다르다면 다익스트라를 써야 한다.
+
+```python
+import heapq
+
+def dijkstra(graph, start):
+    distances = {node: float('inf') for node in graph}
+    distances[start] = 0
+    heap = [(0, start)]  # (비용, 노드)
+    
+    while heap:
+        cost, node = heapq.heappop(heap)
+        
+        if cost > distances[node]:
+            continue
+        
+        for neighbor, weight in graph[node]:
+            new_cost = cost + weight
+            if new_cost < distances[neighbor]:
+                distances[neighbor] = new_cost
+                heapq.heappush(heap, (new_cost, neighbor))
+    
+    return distances
+```
+
+## 회고
+
+처음에 BFS와 DFS를 코드로 구현할 줄 알게 됐어도 실전에서 어느 것을 써야 할지 몰랐다.
+
+"최단 거리 → BFS, 완전 탐색 → DFS"라는 기준을 먼저 머릿속에 박아두고, 이후에 이유를 이해하는 것이 더 빨랐다.
+
+그래프 탐색 문제는 그래프를 어떻게 정의하느냐가 더 중요하다. 노드가 상태고, 엣지가 전이 조건이다. 이걸 잘 정의하면 BFS/DFS는 구현 자체는 어렵지 않다.

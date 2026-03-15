@@ -1,0 +1,155 @@
+---
+title: "헥사고날 아키텍처 — 포트와 어댑터로 의존성을 뒤집다"
+category: "Architecture"
+excerpt: "JPA 엔티티가 비즈니스 로직과 섞여있고, 컨트롤러가 서비스를 직접 의존하는 구조. 테스트하기 어렵고 수정하면 어디서 터질지 모르는 코드. 헥사고날 아키텍처를 공부하면서 왜 이렇게 설계하는지 알게 됐다."
+---
+
+프로젝트를 진행하다 보면 처음엔 깔끔하던 코드가 시간이 지날수록 엉켜가는 걸 경험했을 것이다.
+
+비즈니스 로직이 컨트롤러에 있고, JPA 엔티티에 비즈니스 규칙이 섞여있고, 테스트하려면 DB가 실행 중이어야 하는 상황. 이 문제를 해결하기 위한 하나의 답이 **헥사고날 아키텍처**였다.
+
+## 기존 레이어드 아키텍처의 문제
+
+```
+Controller → Service → Repository → DB
+```
+
+단순하고 이해하기 쉽다. 근데 문제가 있다.
+
+```java
+// Service가 JPA에 직접 의존
+@Service
+public class OrderService {
+    @Autowired
+    private OrderJpaRepository orderJpaRepository; // JPA 구현체에 의존
+    
+    public Order createOrder(CreateOrderRequest request) {
+        // 비즈니스 로직이 JPA 엔티티와 뒤섞임
+        OrderEntity entity = new OrderEntity(request);
+        return orderJpaRepository.save(entity);
+    }
+}
+```
+
+이 코드의 문제:
+- DB 없이 Service 테스트 불가
+- JPA → MongoDB로 바꾸려면 Service도 수정해야 함
+- 비즈니스 로직이 기술(JPA)에 오염됨
+
+## 헥사고날 아키텍처의 핵심
+
+**도메인이 외부 기술에 의존하지 않도록** 한다.
+
+```
+외부(Controller, DB, 외부 API)
+         ↕ Port(Interface)
+    Domain (비즈니스 로직)
+         ↕ Port(Interface)  
+외부(Controller, DB, 외부 API)
+```
+
+도메인이 중심에 있고, 모든 외부 요소는 **인터페이스(Port)** 를 통해 연결된다.
+
+## Port와 Adapter
+
+### Inbound Port (Driving Port)
+외부에서 도메인으로 들어오는 인터페이스.
+
+```java
+// Port (인터페이스) — 도메인 레이어에 존재
+public interface CreateOrderUseCase {
+    Order createOrder(CreateOrderCommand command);
+}
+
+// Adapter — 인프라 레이어
+@RestController
+public class OrderController {
+    private final CreateOrderUseCase createOrderUseCase; // Port에 의존
+    
+    @PostMapping("/orders")
+    public OrderResponse createOrder(@RequestBody CreateOrderRequest request) {
+        CreateOrderCommand command = CreateOrderCommand.from(request);
+        Order order = createOrderUseCase.createOrder(command);
+        return OrderResponse.from(order);
+    }
+}
+```
+
+### Outbound Port (Driven Port)
+도메인이 외부로 나가는 인터페이스.
+
+```java
+// Port (인터페이스) — 도메인 레이어에 존재
+public interface OrderRepository {
+    Order save(Order order);
+    Optional<Order> findById(OrderId id);
+}
+
+// Adapter — 인프라 레이어에서 구현
+@Repository
+public class JpaOrderRepositoryAdapter implements OrderRepository {
+    private final OrderJpaRepository jpaRepository;
+    
+    @Override
+    public Order save(Order order) {
+        OrderEntity entity = OrderEntity.from(order);
+        OrderEntity saved = jpaRepository.save(entity);
+        return saved.toDomain();
+    }
+}
+```
+
+## 의존성이 뒤집힌다
+
+레이어드 아키텍처:
+```
+Domain → Repository(JPA) ❌
+```
+
+헥사고날 아키텍처:
+```
+Domain → Port(Interface) ← Adapter(JPA) ✅
+```
+
+도메인이 JPA가 아니라 인터페이스에 의존한다. 인터페이스는 도메인 레이어에 정의된다. JPA가 도메인을 의존하는 구조로 뒤집어진다.
+
+이게 **의존성 역전 원칙(DIP)** 이다.
+
+## 테스트가 쉬워진다
+
+```java
+// OrderRepository를 Mock으로 교체 가능
+@ExtendWith(MockitoExtension.class)
+class OrderServiceTest {
+    
+    @Mock
+    private OrderRepository orderRepository; // DB 없이 Mock
+    
+    @InjectMocks
+    private OrderService orderService;
+    
+    @Test
+    void 주문을_생성한다() {
+        // DB 없이 순수 비즈니스 로직 테스트
+        Order order = orderService.createOrder(command);
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.PENDING);
+    }
+}
+```
+
+Port(인터페이스)가 있어서 Adapter를 Mock으로 교체할 수 있다. DB 없이도 비즈니스 로직만 순수하게 테스트할 수 있다.
+
+## 언제 쓰는 게 좋을까
+
+솔직히 말하면, 간단한 CRUD 서비스에 헥사고날 아키텍처를 적용하면 오버 엔지니어링이다.
+
+클래스 수가 3배는 늘어난다. 처음 적응하는 팀 입장에서 복잡도가 올라간다.
+
+하지만:
+- 비즈니스 로직이 복잡하고 자주 변경된다
+- 외부 의존성이 많다 (여러 DB, 외부 API)
+- 장기적으로 유지보수해야 하는 서비스다
+
+이런 경우에는 확실히 효과적이다.
+
+실제 프로젝트에서는 핵심 도메인에만 헥사고날을 적용하고, 단순한 부분은 레이어드로 유지했다. 전부 다 바꾸려고 하지 말고 필요한 곳에서만 쓰는 게 현실적이다.

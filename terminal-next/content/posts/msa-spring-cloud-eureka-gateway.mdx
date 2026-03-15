@@ -1,0 +1,163 @@
+---
+title: "Spring Cloud로 MSA 셋업하면서 겪은 것들 — Eureka, Gateway, Config"
+category: "Architecture"
+excerpt: "MSA 아키텍처를 Spring Cloud로 구현하면서 Service Discovery, API Gateway, Config Server를 직접 셋업했다. 처음에 왜 필요한지 몰라서 삽질한 기록을 남긴다."
+---
+
+MSA로 가기로 결정이 났다. Spring Cloud로 구현한다.
+
+공식 문서와 강의를 보면서 따라 했는데, 처음엔 그냥 코드를 복붙했다. "왜 이게 필요한가"를 이해하는 데 시간이 더 걸렸다.
+
+## Service Discovery — Eureka가 왜 필요한가
+
+모놀리스에서는 서비스가 하나라서 URL이 하나다. MSA에서는 서비스가 여러 개고, 각각 다른 포트, 다른 IP를 가진다.
+
+```
+User Service    → localhost:8081
+Order Service   → localhost:8082  
+Payment Service → localhost:8083
+```
+
+개발 환경에서는 포트 기억하면 되지만, 쿠버네티스나 클라우드 환경에서는?
+
+```
+Order Service가 배포될 때마다 IP가 바뀐다
+User Service가 Order Service를 어떻게 찾지?
+```
+
+**Eureka가 해결하는 것:** 서비스들이 Eureka Server에 자기 위치를 등록(Register)하고, 다른 서비스를 찾을 때 Eureka에서 조회(Discover)한다.
+
+```yaml
+# User Service 설정
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/  # Eureka 서버 위치
+  instance:
+    instance-id: ${spring.application.name}:${random.value}
+```
+
+```java
+// Eureka에서 서비스 찾아서 호출
+@LoadBalanced  // Eureka + 로드밸런싱
+@Bean
+public RestTemplate restTemplate() {
+    return new RestTemplate();
+}
+
+// 서비스 이름으로 호출 (IP:PORT 불필요)
+String orderServiceUrl = "http://ORDER-SERVICE/api/orders";
+```
+
+처음에 이게 왜 필요한지 몰랐다. `localhost:8082`로 하드코딩하면 안 되나? — 개발 환경엔 괜찮지만, 서비스가 스케일 아웃되어 인스턴스가 여러 개면 어떤 인스턴스로 요청을 보낼지 결정해야 한다. 이걸 Eureka + Spring Load Balancer가 자동으로 해준다.
+
+## API Gateway — 진입점을 하나로
+
+클라이언트 입장에서 서비스가 10개면 10개의 URL을 알아야 한다. 인증도 각 서비스마다 구현해야 한다.
+
+API Gateway가 단일 진입점이 된다.
+
+```yaml
+# Spring Cloud Gateway 설정
+spring:
+  cloud:
+    gateway:
+      routes:
+        - id: user-service
+          uri: lb://USER-SERVICE  # Eureka에서 찾음
+          predicates:
+            - Path=/api/users/**
+          filters:
+            - AuthorizationHeaderFilter  # 인증 필터
+
+        - id: order-service
+          uri: lb://ORDER-SERVICE
+          predicates:
+            - Path=/api/orders/**
+```
+
+클라이언트는 `gateway:8000`만 알면 된다. 게이트웨이가 라우팅을 담당한다.
+
+**게이트웨이에서 처리하면 좋은 것들:**
+- 인증/인가 (JWT 검증)
+- 로깅
+- 요청 제한 (Rate Limiting)
+- 회로 차단 (Circuit Breaker)
+
+처음에 각 서비스마다 JWT 검증 로직을 복붙했다. 게이트웨이에서 한 번만 하면 되는 걸 몰랐다.
+
+## Config Server — 설정을 중앙에서 관리
+
+서비스가 10개인데 DB 비밀번호를 바꿔야 한다. 10개 서비스 각각의 `application.yml`을 수정하고 10번 배포해야 한다.
+
+Spring Cloud Config Server는 설정을 중앙에서 관리한다.
+
+```
+Git Repository (설정 파일 저장)
+        ↓
+Config Server (설정 제공)
+        ↓
+각 마이크로서비스 (설정 주입받음)
+```
+
+```yaml
+# Config Server 설정
+spring:
+  cloud:
+    config:
+      server:
+        git:
+          uri: https://github.com/my-repo/config-repo
+```
+
+각 서비스는 시작 시 Config Server에서 설정을 가져온다.
+
+**Spring Cloud Bus와 함께 쓰면:** 설정 변경 시 서비스 재시작 없이 실시간 반영도 가능하다.
+
+## Feign Client — 서비스 간 통신
+
+Order Service에서 User Service의 유저 정보가 필요할 때:
+
+```java
+// 기존 RestTemplate 방식 — 복잡하고 에러 처리도 번거롭다
+ResponseEntity<UserDto> response = restTemplate.getForEntity(
+    "http://USER-SERVICE/api/users/" + userId, UserDto.class
+);
+
+// Feign Client — 인터페이스만 정의하면 됨
+@FeignClient(name = "user-service")  // Eureka 서비스명
+public interface UserServiceClient {
+    @GetMapping("/api/users/{userId}")
+    UserDto getUserById(@PathVariable Long userId);
+}
+
+// 서비스에서 그냥 주입받아서 사용
+@Autowired
+private UserServiceClient userServiceClient;
+
+UserDto user = userServiceClient.getUserById(userId);
+```
+
+Spring이 알아서 HTTP 요청을 만들어준다. Eureka에서 User Service 위치를 찾고, 로드밸런싱도 자동이다.
+
+## 겪은 문제들
+
+**문제 1: 서비스 내에서 트랜잭션 처리**
+
+Order를 생성하면서 동시에 Payment를 처리해야 하는데, Payment가 실패하면 Order도 롤백해야 한다. 그런데 두 서비스가 분리되어 있어서 `@Transactional`이 안 먹힌다.
+
+결국 Saga 패턴으로 보상 트랜잭션(Compensating Transaction)을 구현했다. 예상보다 훨씬 복잡했다.
+
+**문제 2: 분산 추적**
+
+어떤 요청이 실패했는데 로그가 User Service, Order Service, Payment Service 각각에 흩어져 있다. 어디서 터진 건지 찾기가 너무 힘들었다.
+
+Zipkin + Spring Cloud Sleuth로 해결했다. 각 요청에 Trace ID를 부여해서 추적할 수 있었다.
+
+## 회고
+
+Spring Cloud를 셋업하는 초기 비용이 생각보다 크다. Eureka, Gateway, Config Server만 셋업해도 러닝 타임이 상당하다.
+
+그리고 MSA는 운영 복잡도가 올라간다는 걸 직접 경험했다. 로컬에서 개발할 때 서비스를 몇 개 동시에 띄워야 하는데 메모리도 많이 먹는다.
+
+"작게 시작해서 필요할 때 분리하라"는 말이 이제 이해된다.

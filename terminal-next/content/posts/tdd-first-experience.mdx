@@ -1,0 +1,161 @@
+---
+title: "TDD를 처음 시도하면서 느낀 것들 — Red, Green, Refactor"
+category: "TIL"
+excerpt: "테스트 먼저 짜는 게 뭔 의미가 있어? 라고 생각했다. 근데 직접 해보니 테스트가 설계를 이끈다는 게 무슨 말인지 체감했다. 특히 LocalDateTime.now()를 외부에서 주입하게 된 계기가 TDD였다."
+---
+
+처음 TDD를 들었을 때 솔직히 이해가 안 됐다.
+
+*기능을 먼저 만들어야 테스트를 작성할 수 있는 거 아닌가?*
+
+Practical Testing 강의를 들으면서 직접 해보고 나서야 그 의미가 다가왔다.
+
+## Red-Green-Refactor
+
+TDD의 기본 사이클은 세 단계다.
+
+### Red — 실패하는 테스트 먼저 작성
+
+```java
+@Test
+void 장바구니_총_금액을_계산한다() {
+    // 아직 Cart 클래스도, calculateTotalPrice() 메서드도 없음
+    Cart cart = new Cart();
+    cart.addItem(new Americano()); // 4000원
+    cart.addItem(new CafeLatte()); // 4500원
+    
+    int totalPrice = cart.calculateTotalPrice();
+    
+    assertThat(totalPrice).isEqualTo(8500);
+}
+```
+
+이걸 실행하면 컴파일 에러. 최소한 컴파일만 되도록만 클래스와 메서드를 만든다.
+
+```java
+public class Cart {
+    public int calculateTotalPrice() {
+        return 0; // 일단 0 반환
+    }
+}
+```
+
+실행하면: 빨간불. `Expected: 8500 / Actual: 0`
+
+### Green — 빠르게 테스트를 통과시킨다
+
+가장 빠르게 초록불을 만드는 방법으로 구현한다. 심지어 이렇게 해도 된다:
+
+```java
+public int calculateTotalPrice() {
+    return 8500; // 극단적이지만 TDD에서는 허용
+}
+```
+
+초록불. 물론 이건 예시를 위한 극단적인 경우고, 실제로는:
+
+```java
+public int calculateTotalPrice() {
+    return items.stream()
+        .mapToInt(Item::getPrice)
+        .sum();
+}
+```
+
+이렇게 구현한다. 초록불.
+
+### Refactor — 초록불을 유지하며 개선
+
+테스트가 통과하는 걸 유지하면서 코드를 개선한다.
+
+```java
+// 스트림으로 리팩토링
+public int calculateTotalPrice() {
+    return items.stream()
+        .mapToInt(Item::getPrice)
+        .sum();
+}
+```
+
+리팩토링 후 다시 테스트 실행 → 여전히 초록불. 기능이 동일하게 동작한다는 걸 테스트가 보장해준다.
+
+## 테스트 먼저 쓰면 설계가 달라진다
+
+이게 내가 제일 크게 체감한 부분이다.
+
+기존 코드:
+```java
+public class OrderService {
+    public Order createOrder(Cart cart) {
+        LocalDateTime now = LocalDateTime.now(); // 테스트에서 제어 불가!
+        // ...
+    }
+}
+```
+
+이 코드를 테스트하려면:
+- `LocalDateTime.now()`가 어떤 값을 반환할지 제어할 수 없다
+- 시간 조건이 있는 로직(영업시간 검사 등)을 테스트하기 어렵다
+
+TDD로 접근하면, 테스트를 먼저 쓰면서 이런 문제를 미리 발견한다:
+
+```java
+@Test
+void 영업시간_이후_주문은_다음날_처리된다() {
+    // 오후 10시 주문을 테스트하고 싶음
+    LocalDateTime orderTime = LocalDateTime.of(2025, 3, 8, 22, 0);
+    
+    // 근데 createOrder 내부에서 now()를 쓰면 이 시간을 어떻게 넣지?
+}
+```
+
+억지로 테스트하려다가 자연스럽게 **파라미터로 분리**하는 설계로 이어진다:
+
+```java
+public Order createOrder(Cart cart, LocalDateTime orderTime) {
+    // 이제 외부에서 시간을 주입 가능
+}
+```
+
+테스트가 설계를 이끌었다.
+
+## 내가 느낀 TDD의 진짜 장점
+
+### 1. 해피 케이스만 테스트하는 습관을 고친다
+
+기능을 먼저 구현하면 "이게 잘 될거야"라는 생각 아래 구현한다. 테스트도 자연히 해피 케이스 위주가 된다.
+
+TDD로 하면 테스트를 짜면서 자연스럽게 질문하게 됨:
+- 수량이 0이면? 음수면?
+- 장바구니가 비어있으면?
+- 동시에 두 명이 같은 상품을 주문하면?
+
+엣지 케이스를 먼저 생각하게 된다.
+
+### 2. 과감한 리팩토링이 가능해진다
+
+테스트가 없으면 리팩토링이 무섭다. *내가 뭔가 건드렸을 때 서비스에서 문제가 생기면 어떡하지.*
+
+테스트가 있으면 리팩토링 후 실행 한 번으로 확인된다.
+
+```java
+// 방법 1: 반복문
+int total = 0;
+for (Item item : items) {
+    total += item.getPrice();
+}
+return total;
+
+// 방법 2: 스트림으로 리팩토링
+return items.stream().mapToInt(Item::getPrice).sum();
+```
+
+테스트가 두 방법 모두 동일한 결과를 내는지 즉시 확인해준다. 마음 편하게 바꿀 수 있다.
+
+## TDD가 어렵게 느껴지는 이유
+
+1. **테스트를 먼저 쓰는 게 어색하다**: 습관이 안 되어 있어서다. 반복하면 된다.
+2. **모든 상황에 TDD를 강요하게 된다**: TDD는 도구다. 탐구적인 코드, 간단한 유틸함수에 굳이 TDD를 할 필요 없다.
+3. **레거시 코드에 TDD를 적용하기 어렵다**: 처음부터 테스트를 고려하지 않은 코드는 테스트하기 어렵다.
+
+TDD의 목표는 "테스트를 먼저 쓰는 것"이 아니라 **더 나은 설계와 코드를 만드는 것**이다. 수단에 집착하지 않는 게 중요하다.

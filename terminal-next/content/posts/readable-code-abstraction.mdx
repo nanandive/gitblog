@@ -1,0 +1,123 @@
+---
+title: "추상화 — 복잡한 것을 숨기는 기술, 코드도 마찬가지다"
+category: "TIL"
+excerpt: "추상화가 OOP의 핵심이라는 말은 많이 들었다. Readable Code 강의에서 추상화를 '잘 모를수록 잘 쓸 수 있는 것'으로 설명하면서 비로소 와닿았다. 메서드 추출이 왜 추상화인지, 인터페이스가 왜 추상화인지 정리한다."
+---
+
+추상화. 자동차 운전을 예로 든다. 엔진 원리를 몰라도 운전할 수 있다. 그게 추상화다. 이론은 이해했다.
+
+근데 코드에서 "추상화를 잘 했다"는 게 뭔지는 한참 동안 몰랐다.
+
+## 추상적이다 vs 구체적이다
+
+생각보다 스펙트럼이 있다.
+
+**구체적:**
+```java
+private List<Cell> cells;  // Cell은 이차원 배열의 셀
+```
+
+**추상적:**
+```java
+private GameBoard board;  // GameBoard는 게임판이라는 개념
+```
+
+`cells`는 구체적인 데이터 구조가 보인다. `board`는 게임판이라는 개념만 보이고 내부 구현이 숨겨진다.
+
+추상화 수준은 **얼마나 모르게 할 수 있는가**와 관련 있다. `board.open(row, col)`이라고 할 때, 내부가 이차원 배열인지 HashMap인지 모른다. 그게 추상화다.
+
+## 메서드 추출이 추상화인 이유
+
+```java
+// 추상화 없는 코드
+if (isFirstColumnIndex && isFirstRowIndex) {
+    cells[0][0] = new Cell(true, false);  // 지뢰셀
+} else if (!isFirstColumnIndex && !isFirstRowIndex) {
+    // 경계가 아닌 셀 처리
+    ...
+}
+
+// 메서드 추출로 추상화
+if (isFirstRow(row) && isFirstColumn(col)) {
+    initLandmineCell(row, col);
+} else {
+    initNormalCell(row, col);
+}
+```
+
+아래 코드는 구현을 모른다. `isFirstRow`가 어떻게 구현됐는지, `initLandmineCell`이 내부적으로 어떻게 처리하는지 읽을 때 신경 쓰지 않아도 된다.
+
+**"어떻게(How)" 대신 "무엇(What)"을 보여준다.** 이게 추상화다.
+
+## 이름이 추상화의 핵심
+
+```java
+// 구체적 이름 — 구현이 보임
+cells[row][col].turnOnLandmine();
+
+// 추상적 이름 — 의도가 보임
+board.placeLandmine(row, col);
+```
+
+`turnOnLandmine`은 Cell 객체의 상태를 바꾸는 구체적인 행위다. `placeLandmine`은 지뢰를 놓는다는 도메인 의도다.
+
+좋은 추상화는 이름만으로 **왜** 이 코드가 있는지 설명한다.
+
+## 인터페이스가 추상화인 이유
+
+```java
+public interface NotificationSender {
+    void send(String message);
+}
+```
+
+`NotificationSender`를 쓰는 클라이언트는 이메일인지, SMS인지, 카카오톡인지 모른다. 그냥 `send`를 호출한다.
+
+인터페이스는 **사용자가 알아야 할 것(무엇)**과 **구현자가 알아야 할 것(어떻게)**를 분리한다.
+
+```java
+// 클라이언트: 무엇만 안다
+notificationSender.send("주문이 완료되었습니다.");
+
+// 구현체: 어떻게를 안다
+public class EmailNotificationSender implements NotificationSender {
+    public void send(String message) {
+        // SMTP 서버 연결, 이메일 포맷 생성, 발송...
+    }
+}
+```
+
+## 추상화 수준을 맞춰라
+
+한 메서드 안에서 추상화 수준이 섞이면 읽기 어렵다.
+
+```java
+// 추상화 수준이 섞임 — 읽기 어려움
+public void run() {
+    initializeGame();                    // 고수준 (추상적)
+    
+    cells = new Cell[ROW_SIZE][COL_SIZE]; // 저수준 (구체적)
+    for (int i = 0; i < cells.length; i++) {
+        cells[i] = new Cell[COL_SIZE];
+    }
+    
+    showBoard();                          // 고수준
+}
+
+// 같은 수준으로 맞춤 — 읽기 쉬움
+public void run() {
+    initializeGame();
+    initializeCells();    // 내부 구현을 메서드로 숨김
+    showBoard();
+}
+```
+
+메서드 하나가 한 가지 추상화 수준만 다루도록 하면 읽기 쉬워진다.
+
+## 회고
+
+추상화를 잘 한다는 건 코드를 잘 모르게 만드는 것이다. 모른다는 게 나쁜 게 아니라, 알 필요가 없는 것은 숨기는 것이 설계의 미덕이다.
+
+처음 코드를 짤 때는 내가 구현한 것이 보이는 이름을 붙이는 경향이 있었다. `doSomethingWithCellArray()` 같은 식으로. 이제는 "읽는 사람이 이 코드에서 무엇을 알면 되는가"를 먼저 생각한다.
+
+코드는 컴퓨터보다 사람이 더 많이 읽는다. 추상화는 그 사람을 위한 것이다.

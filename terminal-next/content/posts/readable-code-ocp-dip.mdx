@@ -1,0 +1,150 @@
+---
+title: "OCP와 DIP — 변경에 유연한 코드를 만드는 두 원칙"
+category: "TIL"
+excerpt: "새 기능을 추가할 때마다 기존 코드를 수정해야 했다. OCP(개방-폐쇄 원칙)와 DIP(의존성 역전 원칙)를 이해하고 나서 왜 인터페이스가 필요한지 비로소 납득됐다."
+---
+
+"인터페이스 없이 구현 클래스를 직접 사용했는데 뭐가 문제죠?"
+
+코드 리뷰에서 이 질문을 했다가 30분 동안 설명을 들었다. 그때는 이해했다고 생각했는데 다음 번에 또 같은 패턴으로 짰다.
+
+강의에서 구체적인 코드 예제를 통해 이해하고 나서야 진짜로 납득이 됐다.
+
+## OCP: 개방-폐쇄 원칙
+
+> 소프트웨어 엔티티는 확장에는 열려있고, 수정에는 닫혀있어야 한다.
+
+새 기능을 추가할 때:
+- **확장**: 새 코드를 추가한다 (새 클래스, 새 메서드)
+- **수정**: 기존 코드를 변경한다
+
+OCP는 기존 코드를 변경하지 않고 새 기능을 추가할 수 있도록 설계하라는 것이다.
+
+### 위반하는 코드
+
+```java
+public class OrderService {
+    public void notify(String type, String message) {
+        if ("email".equals(type)) {
+            // 이메일 발송
+            emailClient.send(message);
+        } else if ("sms".equals(type)) {
+            // SMS 발송
+            smsClient.send(message);
+        }
+        // 카카오톡 추가? → 여기에 else if 추가해야 함
+        // → OrderService 수정 필요
+    }
+}
+```
+
+카카오톡 알림을 추가하려면 `OrderService`를 수정해야 한다. "수정에 닫혀있어야" 하는데 수정이 필요하다. OCP 위반이다.
+
+### OCP를 지키는 코드
+
+```java
+// 추상화: 알림 발송 인터페이스
+public interface NotificationService {
+    void send(String message);
+}
+
+// 구현체들
+public class EmailNotificationService implements NotificationService {
+    public void send(String message) { emailClient.send(message); }
+}
+
+public class SmsNotificationService implements NotificationService {
+    public void send(String message) { smsClient.send(message); }
+}
+
+// 카카오톡 추가 → 새 클래스만 추가, OrderService 수정 X
+public class KakaoNotificationService implements NotificationService {
+    public void send(String message) { kakaoClient.send(message); }
+}
+
+// OrderService는 인터페이스에만 의존
+public class OrderService {
+    private final List<NotificationService> notificationServices;
+    
+    public void notify(String message) {
+        notificationServices.forEach(s -> s.send(message));
+    }
+}
+```
+
+새 알림 방법을 추가해도 `OrderService`는 수정하지 않는다. 새 구현체만 추가한다.
+
+## DIP: 의존성 역전 원칙
+
+> 고수준 모듈이 저수준 모듈에 직접 의존하면 안 된다. 둘 다 추상화에 의존해야 한다.
+
+**고수준 모듈**: 비즈니스 로직 (OrderService)
+**저수준 모듈**: 세부 구현 (EmailClient, SmsClient)
+
+```java
+// DIP 위반: 고수준이 저수준에 직접 의존
+public class OrderService {
+    private final EmailClient emailClient;     // 저수준 모듈
+    private final SmsClient smsClient;         // 저수준 모듈
+    
+    public OrderService() {
+        this.emailClient = new EmailClient();  // 직접 생성
+        this.smsClient = new SmsClient();
+    }
+}
+```
+
+```java
+// DIP 준수: 둘 다 추상화(인터페이스)에 의존
+public class OrderService {
+    private final NotificationService notificationService;  // 추상화에 의존
+    
+    // 외부에서 주입 (DI)
+    public OrderService(NotificationService notificationService) {
+        this.notificationService = notificationService;
+    }
+}
+```
+
+**의존성 방향이 역전됐다.**
+
+원래: `OrderService` → `EmailClient` (저수준으로 의존)
+
+역전 후: `OrderService` → `NotificationService` (인터페이스, 추상화로 의존)
+          `EmailClient` → `NotificationService` (구현체도 추상화에 의존)
+
+## OCP와 DIP의 관계
+
+OCP를 달성하는 수단이 DIP다.
+
+인터페이스를 두고(DIP), 구현체를 교체하거나 추가해도 클라이언트 코드가 변경되지 않는다(OCP).
+
+## Spring에서 DI와 DIP
+
+Spring의 DI(Dependency Injection)가 DIP를 구현하는 방법이다.
+
+```java
+@Service
+public class OrderService {
+    private final NotificationService notificationService;
+    
+    @Autowired
+    public OrderService(NotificationService notificationService) {
+        this.notificationService = notificationService;
+    }
+}
+
+// Spring이 NotificationService 구현체를 자동으로 주입
+@Component
+public class EmailNotificationService implements NotificationService { ... }
+```
+
+`OrderService`는 `NotificationService`가 이메일인지 SMS인지 모른다. Spring이 알아서 주입해준다. 테스트할 때는 Mock 구현체를 주입하면 된다.
+
+## 회고
+
+인터페이스가 "언제 쓰는 거야?"라는 의문이 항상 있었다.
+
+구현이 하나밖에 없는데 인터페이스가 왜 필요해? — 지금은 하나지만 나중에 추가될 때 기존 코드를 수정하지 않아도 된다. 그리고 테스트할 때 Mock으로 교체할 수 있다.
+
+"나중에 바뀔 것인지"를 생각하는 습관이 OCP/DIP의 시작점이다.

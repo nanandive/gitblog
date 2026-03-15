@@ -1,0 +1,182 @@
+---
+title: "Producer-Consumer와 DeadLock — ETL 파이프라인을 설계하면서 배운 것"
+category: "CS"
+excerpt: "ETL 파이프라인에서 Producer-Consumer 패턴을 구현했는데 특정 조건에서 시스템이 멈추는 현상이 생겼다. DeadLock이었다. 왜 발생했고 어떻게 해결했는지 기록한다."
+---
+
+ETL 파이프라인의 구조:
+
+```
+데이터 소스 → [Producer 쓰레드] → 큐 → [Consumer 쓰레드] → DB 저장
+```
+
+Producer와 Consumer를 분리해서 각자의 속도로 동작하게 했다.
+
+잘 돌아가다가 특정 조건에서 시스템이 멈췄다. 로그가 안 찍히고, CPU 사용률도 0. 모든 쓰레드가 서로를 기다리는 **DeadLock**이었다.
+
+## Producer-Consumer 패턴
+
+데이터를 생산하는 쪽과 소비하는 쪽을 분리한다.
+
+```java
+// 공유 큐
+BlockingQueue<DataRecord> queue = new LinkedBlockingQueue<>(1000);
+
+// Producer: 데이터를 읽어서 큐에 넣음
+class DataProducer implements Runnable {
+    @Override
+    public void run() {
+        for (DataRecord record : dataSource) {
+            queue.put(record); // 큐가 꽉 차면 대기
+        }
+    }
+}
+
+// Consumer: 큐에서 꺼내서 처리
+class DataConsumer implements Runnable {
+    @Override
+    public void run() {
+        while (!finished || !queue.isEmpty()) {
+            DataRecord record = queue.poll(1, TimeUnit.SECONDS);
+            if (record != null) {
+                process(record);
+            }
+        }
+    }
+}
+```
+
+`BlockingQueue`가 Guarded Suspension을 자동으로 처리해준다. Producer는 큐가 꽉 차면 대기, Consumer는 큐가 비면 대기.
+
+## DeadLock이 발생한 상황
+
+내 코드에서 문제가 된 부분은 락을 두 개 이상 사용하면서 발생했다.
+
+```java
+// 잘못된 코드
+final Object lockA = new Object(); // DB 연결 풀 락
+final Object lockB = new Object(); // 캐시 락
+
+// 쓰레드 1
+synchronized (lockA) {
+    // A를 잡고 B를 기다림
+    synchronized (lockB) {
+        writeToDb(data);
+    }
+}
+
+// 쓰레드 2
+synchronized (lockB) {
+    // B를 잡고 A를 기다림
+    synchronized (lockA) {
+        updateCache(data);
+    }
+}
+```
+
+```
+쓰레드 1: lockA 획득 → lockB 기다리는 중 ⏳
+쓰레드 2: lockB 획득 → lockA 기다리는 중 ⏳
+
+둘 다 영원히 대기 = DeadLock
+```
+
+## DeadLock의 4가지 조건
+
+DeadLock이 발생하려면 4가지 조건이 모두 충족되어야 한다.
+
+1. **상호 배제(Mutual Exclusion)**: 자원을 한 번에 하나의 쓰레드만 사용
+2. **보유와 대기(Hold and Wait)**: 자원을 가진 상태로 다른 자원을 기다림
+3. **비선점(No Preemption)**: 락을 강제로 빼앗을 수 없음
+4. **순환 대기(Circular Wait)**: 쓰레드들이 서로를 기다리는 순환 구조
+
+하나라도 없애면 DeadLock이 발생하지 않는다.
+
+## 해결 방법
+
+### 1. 락 순서 고정 — 순환 대기 제거
+
+```java
+// 항상 lockA → lockB 순서로만 획득
+// 이렇게 하면 순환 대기가 발생하지 않음
+
+// 쓰레드 1, 2 모두 같은 순서로 락 획득
+synchronized (lockA) {
+    synchronized (lockB) {
+        // ...
+    }
+}
+```
+
+모든 쓰레드에서 락 획득 순서를 동일하게 유지하면 DeadLock이 발생하지 않는다.
+
+### 2. 타임아웃 사용 — 무한 대기 방지
+
+```java
+Lock lockA = new ReentrantLock();
+Lock lockB = new ReentrantLock();
+
+boolean success = false;
+try {
+    if (lockA.tryLock(1, TimeUnit.SECONDS)) { // 1초 안에 못 잡으면 포기
+        try {
+            if (lockB.tryLock(1, TimeUnit.SECONDS)) {
+                try {
+                    // 두 락 모두 획득
+                    success = true;
+                    doWork();
+                } finally {
+                    lockB.unlock();
+                }
+            }
+        } finally {
+            lockA.unlock();
+        }
+    }
+} catch (InterruptedException e) {
+    Thread.currentThread().interrupt();
+}
+
+if (!success) {
+    // 재시도 로직
+}
+```
+
+### 3. 락 구조 단순화 — 애초에 중첩 락 피하기
+
+가장 근본적인 해결책. 중첩 `synchronized`가 필요한 설계 자체를 재고한다.
+
+```java
+// 하나의 공유 자원에 하나의 락
+// 복잡한 중첩 구조 대신 설계를 단순화
+```
+
+내 케이스에서는 DB 연결 풀 접근과 캐시 업데이트를 순차적으로 하도록 리팩토링해서 중첩 락 자체를 없앴다.
+
+## DeadLock 탐지
+
+DeadLock이 의심될 때:
+
+```bash
+# 쓰레드 덤프 출력
+kill -3 <PID>
+
+# 또는 jstack 사용
+jstack <PID> > thread_dump.txt
+```
+
+덤프에서 `BLOCKED` 상태의 쓰레드들을 찾고, 서로를 기다리는 순환 구조가 있는지 확인한다.
+
+IntelliJ에서는 디버깅 중 "Threads" 탭에서 실시간으로 쓰레드 상태를 볼 수 있다.
+
+## 결론
+
+멀티쓰레드의 어려운 점은 버그가 재현이 안 된다는 것이다. DeadLock은 특정 타이밍에서만 발생하기 때문에 개발 환경에서는 안 나오다가 운영 환경에서 터진다.
+
+예방이 최선이다:
+- 락 순서를 문서화하고 일관되게 유지
+- 중첩 락을 최대한 피하기
+- 락 구간을 최소화하기
+- `BlockingQueue`, `ConcurrentHashMap` 같은 잘 만들어진 동시성 자료구조 활용
+
+직접 `synchronized`와 `wait/notify`를 다루는 코드는 최후의 수단이다.

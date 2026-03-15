@@ -1,0 +1,141 @@
+---
+title: "트랜잭션과 MVCC — 왜 읽기가 쓰기 락을 기다리지 않는가"
+category: "CS"
+excerpt: "은행 이체 로직을 구현하다가 트랜잭션을 당연하게 쓰고 있었다는 걸 깨달았다. MVCC가 없으면 SELECT 하나도 락을 기다려야 한다. 그걸 모르고 @Transactional만 붙이고 있었다."
+---
+
+Spring에서 `@Transactional`을 붙이는 게 너무 당연해져서 트랜잭션이 내부적으로 어떻게 동작하는지 생각해본 적이 없었다.
+
+회사에서 결제 서비스 코드 리뷰를 하다가 시니어분이 "이 SELECT에 MVCC가 어떻게 적용되는지 알고 있어요?" 라고 물어봤을 때 제대로 대답을 못했다. 그날 저녁부터 파기 시작했다.
+
+## 트랜잭션이란
+
+여러 작업을 하나로 묶어서 **모두 성공하거나 모두 실패하게** 만드는 것.
+
+은행 이체로 예를 들면:
+
+```sql
+BEGIN;
+
+-- A 계좌에서 10만원 차감
+UPDATE accounts SET balance = balance - 100000 WHERE id = 'A';
+
+-- B 계좌에 10만원 추가
+UPDATE accounts SET balance = balance + 100000 WHERE id = 'B';
+
+COMMIT;
+```
+
+A에서 돈이 빠졌는데 B에 안 들어가면 데이터 정합성이 깨진다. 트랜잭션이 이 두 작업을 원자적으로 묶어준다.
+
+`COMMIT`으로 확정, 중간에 오류나면 `ROLLBACK`으로 전체 되돌리기.
+
+ACID니 뭐니 외우는 것보다 이 원리 하나를 제대로 이해하는 게 더 중요하다는 걸 느꼈다.
+
+## MySQL의 락 종류
+
+동시에 여러 트랜잭션이 같은 데이터에 접근할 때 충돌을 막으려고 락이 필요하다.
+
+### 테이블 락
+테이블 전체에 락을 건다. WHERE 없이 전체 업데이트할 때 발생할 수 있다. 범위가 너무 넓어서 성능에 악영향.
+
+### 갭 락 (Gap Lock)
+인덱스의 **특정 범위**에 락을 건다.
+
+```sql
+-- id 10~20 사이의 데이터를 읽는 동안
+SELECT * FROM orders WHERE id BETWEEN 10 AND 20 FOR UPDATE;
+
+-- 이 범위에 새 데이터가 INSERT되는 걸 막음
+-- Phantom Read 방지
+```
+
+REPEATABLE READ 격리 수준에서 팬텀 리드를 막기 위해 사용된다.
+
+### Exclusive Lock (쓰기 락)
+```sql
+SELECT * FROM orders WHERE id = 1 FOR UPDATE;
+```
+
+데이터를 수정할 때 다른 트랜잭션이 같은 행을 건드리지 못하게 막는다.
+
+### Shared Lock (읽기 락)
+```sql
+SELECT * FROM orders WHERE id = 1 LOCK IN SHARE MODE;
+```
+
+명시적으로 걸지 않으면 일반 SELECT는 락을 걸지 않는다. 이게 가능한 이유가 **MVCC** 덕분이다.
+
+## MVCC — 진짜 중요한 것
+
+MVCC(Multi-Version Concurrency Control)가 없으면 어떻게 됐을까?
+
+트랜잭션 A가 UPDATE를 하는 동안 트랜잭션 B가 SELECT를 하면 → B는 A의 락이 풀릴 때까지 **기다려야** 한다.
+
+서비스 트래픽이 조금만 올라가도 DB가 막혀버리는 이유가 된다.
+
+MVCC의 핵심: **읽기 작업은 락이 필요 없다.**
+
+어떻게?
+
+```
+트랜잭션 시작 시점의 스냅샷을 찍는다
+→ 데이터가 수정 중이라도
+→ 수정 이전의 스냅샷을 제공
+→ 락을 기다릴 필요 없음
+```
+
+## 시퀀스로 이해하는 MVCC + Lock
+
+```
+트랜잭션 1 (UPDATE)
+  BEGIN
+  → id=1 행에 Exclusive Lock 획득
+  → 데이터 수정 중...
+
+트랜잭션 2 (SELECT) - 동시 실행
+  → id=1 행 SELECT
+  → Exclusive Lock이 걸려 있음
+  → BUT: MVCC가 수정 이전 스냅샷 제공
+  → 락 기다리지 않고 바로 반환 ✅
+
+트랜잭션 3 (UPDATE) - 동시 실행
+  → id=1 행 UPDATE 시도
+  → Exclusive Lock이 걸려 있음
+  → 락이 풀릴 때까지 대기... ⏳
+
+트랜잭션 1
+  → COMMIT
+  → Exclusive Lock 해제
+
+트랜잭션 3
+  → 락 획득 성공
+  → 업데이트 실행
+```
+
+SELECT는 스냅샷 덕분에 기다리지 않고, UPDATE는 데이터 무결성을 위해 기다린다.
+
+## @Transactional readOnly = true의 의미
+
+이걸 알고 나니 `readOnly = true`가 왜 존재하는지 이해됐다.
+
+```java
+// 읽기 전용 트랜잭션
+@Transactional(readOnly = true)
+public List<Order> getOrders() {
+    return orderRepository.findAll();
+}
+```
+
+- 쓰기 락을 획득하지 않음
+- 스냅샷 레벨의 일관된 읽기 보장
+- 불필요한 Undo 로그 생성 안 함
+- 데이터 변경 감지(Dirty Checking) 비활성화 → 성능 향상
+
+단순히 "성능 좋아진다"가 아니라 트랜잭션과 MVCC의 원리가 반영된 설정이었다.
+
+## 배운 점
+
+이 내용을 알고 나서 레거시 코드에서 불필요한 `FOR UPDATE`가 남발되던 걸 발견했다. 읽기만 하는데 쓰기 락을 거니까 불필요한 병목이 생기고 있었다.
+
+"왜 DB가 느리지?" 라는 질문의 답이 항상 인덱스에만 있는 게 아니었다. 락과 MVCC를 이해하고 나서야 문제의 전체 그림이 보이기 시작했다.

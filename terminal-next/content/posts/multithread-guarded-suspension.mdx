@@ -1,0 +1,160 @@
+---
+title: "Guarded Suspension 패턴 — 할 일 없으면 자고, 생기면 깨어나라"
+category: "CS"
+excerpt: "ETL 파이프라인에서 Producer-Consumer 구조를 구현하면서 Guarded Suspension 패턴을 만났다. wait/notifyAll의 동작 원리와 왜 바쁜 대기(Busy Waiting)를 피해야 하는지 정리했다."
+---
+
+ETL 파이프라인을 설계하면서 이런 상황을 마주쳤다.
+
+데이터를 읽는 쓰레드(Producer)와 처리하는 쓰레드(Consumer)를 분리하고 싶었다. 근데 데이터가 없을 때 Consumer가 계속 반복문을 돌면서 체크하면 CPU를 낭비한다.
+
+**Busy Waiting (바쁜 대기):**
+```java
+// 나쁜 방법 — CPU 100% 사용하면서 대기
+while (queue.isEmpty()) {
+    // 아무것도 안 하면서 계속 체크
+}
+processData(queue.poll());
+```
+
+`Guarded Suspension` 패턴은 이 문제를 해결한다. **조건이 충족될 때까지 쓰레드를 재운다.**
+
+## wait / notifyAll
+
+Java의 `wait()`와 `notifyAll()`이 Guarded Suspension의 기반이다.
+
+```java
+final Object lock = new Object(); // 락 역할
+final Queue<String> requestQueue = new LinkedList<>();
+
+// Consumer 역할을 하는 서버 쓰레드
+void serverThread() {
+    while (!shouldStop) {
+        String request;
+        synchronized (lock) {
+            // 할 일이 없으면 WAIT — 쓰레드를 재운다
+            while (requestQueue.isEmpty()) {
+                lock.wait(); // 여기서 멈춤. CPU 사용 없음
+            }
+            request = requestQueue.poll();
+        }
+        // 락 밖에서 실제 처리
+        processRequest(request);
+    }
+}
+
+// Producer 역할을 하는 클라이언트 쓰레드
+void clientThread() {
+    while (!shouldStop) {
+        String request = createRequest();
+        synchronized (lock) {
+            requestQueue.offer(request);
+            lock.notifyAll(); // 자고 있는 쓰레드들 전부 깨움
+        }
+        Thread.sleep(1000); // 1초마다 요청 생성
+    }
+}
+```
+
+실행 흐름:
+
+```
+1. 서버 쓰레드: 큐가 비었다 → wait() → 쓰레드 대기 상태 (CPU 사용 없음)
+2. 클라이언트 쓰레드: 요청 큐에 추가 → notifyAll() → 자는 쓰레드들 깨움
+3. 서버 쓰레드: 깨어남 → 큐에서 요청 꺼냄 → 처리 → 다시 빈 큐면 wait()
+```
+
+CPU를 낭비하지 않으면서 데이터가 생기는 즉시 처리한다.
+
+## synchronized 블록 안에서만 wait/notify 사용
+
+중요한 제약이 있다. `wait()`와 `notifyAll()`은 반드시 **같은 락 객체로 synchronized된 블록 안**에서 호출해야 한다.
+
+```java
+// 틀린 방법 — IllegalMonitorStateException 발생
+lock.wait(); // synchronized 없이 호출하면 예외
+
+// 올바른 방법
+synchronized (lock) {
+    lock.wait(); // synchronized 안에서 호출
+}
+```
+
+## 종료 시 주의사항
+
+서버 쓰레드가 `wait()` 상태일 때 프로그램을 종료하면 쓰레드가 영원히 대기한다. 프로그램이 종료되지 않는다.
+
+```java
+// shouldStop 플래그로 종료 신호
+volatile boolean shouldStop = false;
+
+// 종료할 때
+synchronized (lock) {
+    shouldStop = true;
+    lock.notifyAll(); // wait 중인 쓰레드 깨우기
+}
+
+// 서버 쓰레드 안에서
+synchronized (lock) {
+    while (requestQueue.isEmpty() && !shouldStop) { // shouldStop 체크 추가
+        lock.wait();
+    }
+    if (shouldStop) return; // 종료 신호면 빠져나가기
+}
+```
+
+## 락 구간을 최소화하자
+
+처음에 이렇게 짰다:
+
+```java
+synchronized (lock) {
+    while (requestQueue.isEmpty()) lock.wait();
+    String request = requestQueue.poll();
+    processRequest(request); // 처리까지 락 안에서 — 잘못됨!
+    lock.notifyAll();
+}
+```
+
+`processRequest()`가 오래 걸리면 그 동안 Producer도 락을 못 잡는다. 병목이 생긴다.
+
+**분리하는 게 맞다:**
+
+```java
+String request;
+synchronized (lock) {
+    // 공유 자원 접근만 락 안에서
+    while (requestQueue.isEmpty()) lock.wait();
+    request = requestQueue.poll();
+}
+// 실제 처리는 락 밖에서
+processRequest(request);
+```
+
+## Java에서 더 편한 방법: BlockingQueue
+
+실제 프로젝트에서는 직접 `wait/notify`를 쓰는 것보다 `BlockingQueue`를 쓰는 게 더 안전하고 편하다.
+
+```java
+BlockingQueue<String> queue = new LinkedBlockingQueue<>(100);
+
+// Producer
+void producerThread() throws InterruptedException {
+    while (!shouldStop) {
+        String data = fetchData();
+        queue.put(data); // 꽉 차면 자동으로 대기
+    }
+}
+
+// Consumer
+void consumerThread() throws InterruptedException {
+    while (!shouldStop) {
+        String data = queue.take(); // 비어있으면 자동으로 대기 (Guarded Suspension)
+        process(data);
+    }
+}
+```
+
+`BlockingQueue`가 내부적으로 Guarded Suspension을 구현하고 있다. 직접 `wait/notify`를 다루는 것보다 실수 가능성이 훨씬 낮다.
+
+ETL 파이프라인에서 실제로 `LinkedBlockingQueue`로 교체했더니 코드가 훨씬 단순해졌고 버그도 없어졌다. 패턴을 이해하는 것도 중요하지만, 이미 잘 구현된 라이브러리를 잘 활용하는 것도 실력이다.

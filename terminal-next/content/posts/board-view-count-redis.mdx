@@ -1,0 +1,124 @@
+---
+title: "조회수 정합성 — 게시글 조회마다 DB를 치면 어떻게 되는가"
+category: "CS"
+excerpt: "게시글 조회수는 단순해 보이지만 트래픽이 커지면 DB를 직접 치는 방식이 병목이 된다. Redis 캐싱으로 조회수를 관리하고, 배치로 DB에 반영하는 방법을 대규모 시스템 설계 강의를 바탕으로 정리한다."
+---
+
+게시글 조회수 기능은 항상 단순하게 만들었다.
+
+```java
+public ArticleResponse getArticle(Long articleId) {
+    Article article = articleRepository.findById(articleId);
+    article.increaseViewCount();
+    articleRepository.save(article);
+    return ArticleResponse.from(article);
+}
+```
+
+이게 뭐가 문제야? 조회마다 UPDATE 쿼리가 나간다. 조회 트래픽이 많은 게시글이라면?
+
+## 조회수의 특성
+
+좋아요는 사용자가 의식적으로 누르는 액션이다. 조회수는 페이지를 열 때마다 발생한다.
+
+인기 게시글이라면 초당 수백, 수천 번 조회가 일어날 수 있다. 그때마다 DB에 UPDATE 쿼리가 나간다면 DB가 병목이 된다.
+
+조회수는 정확도에 대한 요구가 느슨할 수 있다. 100이든 102든 사용자 경험에 큰 차이가 없다. "따닥" 클릭으로 2가 되는 것보다 1회로 처리되는 게 더 자연스럽기도 하다.
+
+이 특성을 이용해서 DB를 직접 치지 않는 방식을 쓸 수 있다.
+
+## Redis를 이용한 조회수 관리
+
+```java
+@Service
+public class ArticleViewCountService {
+
+    private final RedisTemplate<String, Long> redisTemplate;
+    private static final String VIEW_COUNT_KEY = "article:viewCount:";
+    
+    // 조회마다 Redis INCR
+    public void increaseViewCount(Long articleId) {
+        String key = VIEW_COUNT_KEY + articleId;
+        redisTemplate.opsForValue().increment(key);
+    }
+    
+    // Redis에서 조회수 가져오기
+    public long getViewCount(Long articleId) {
+        String key = VIEW_COUNT_KEY + articleId;
+        Long count = redisTemplate.opsForValue().get(key);
+        return count != null ? count : 0;
+    }
+}
+```
+
+Redis의 `INCR` 명령은 원자적(Atomic)이다. 동시에 여러 요청이 와도 카운트가 정확히 증가한다.
+
+DB UPDATE 대신 Redis INCR = DB 부하가 사라진다.
+
+## 배치로 DB에 반영
+
+Redis에 쌓인 조회수를 주기적으로 DB에 반영한다.
+
+```java
+@Scheduled(fixedDelay = 60_000)  // 1분마다
+public void syncViewCountToDB() {
+    Set<String> keys = redisTemplate.keys("article:viewCount:*");
+    
+    for (String key : keys) {
+        Long articleId = extractArticleId(key);
+        Long viewCount = redisTemplate.opsForValue().get(key);
+        
+        if (viewCount != null && viewCount > 0) {
+            // DB에 반영
+            articleRepository.increaseViewCount(articleId, viewCount);
+            // Redis 초기화
+            redisTemplate.delete(key);
+        }
+    }
+}
+```
+
+```sql
+-- 누적 증가 (현재 DB 값 + Redis에 쌓인 값)
+UPDATE articles 
+SET view_count = view_count + :increment
+WHERE id = :articleId
+```
+
+## 동일한 유저의 중복 조회 방지
+
+새로고침하면 조회수가 계속 올라가면 안 된다. 짧은 시간 내 동일 유저의 재조회를 막아야 한다.
+
+```java
+public void increaseViewCount(Long articleId, Long userId) {
+    String deduplicateKey = "article:viewed:" + articleId + ":" + userId;
+    
+    // 10분 내 동일 유저 재조회면 무시
+    Boolean isNew = redisTemplate.opsForValue()
+        .setIfAbsent(deduplicateKey, 1L, Duration.ofMinutes(10));
+    
+    if (Boolean.TRUE.equals(isNew)) {
+        // 새 조회만 카운트
+        redisTemplate.opsForValue().increment("article:viewCount:" + articleId);
+    }
+}
+```
+
+비로그인 유저는 IP + User-Agent로 구분할 수도 있다.
+
+## 정확성 vs 성능 트레이드오프
+
+Redis를 쓰면 정확성이 떨어질 수 있다.
+
+- Redis 장애 시 1분치 조회수 유실
+- DB 동기화 전까지 DB와 Redis 값 불일치
+
+하지만 조회수는 이 정도 불일치를 허용할 수 있다. 완벽한 정확성이 필요하면 Redis 복제(AOF, RDB) 설정으로 보완한다.
+
+## 회고
+
+처음에는 "조회수가 뭐 어렵겠어"라고 생각했다.
+
+트래픽이 붙으니까 조회수 UPDATE가 DB에서 Lock contention을 일으키고, SELECT와 UPDATE가 충돌하는 문제가 생겼다.
+
+단순한 기능이어도 트래픽 규모에 따라 완전히 다른 설계가 필요하다. 지금 당장은 단순하게 해도 되지만, "나중에 어떻게 바꿀 것인가"를 알고 시작하는 것과 모르고 시작하는 것은 차이가 크다.
