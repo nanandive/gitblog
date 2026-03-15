@@ -22,20 +22,31 @@ export default function GraphPage() {
         fetch('/api/posts')
             .then(r => r.json())
             .then((posts: Array<{ id: string; title: string; category: string; relatedPosts?: string[] }>) => {
+                const W = containerRef.current?.offsetWidth || 800;
+                const H = containerRef.current?.offsetHeight || 600;
+                const cx = W / 2;
+                const cy = H / 2;
+                const r = Math.min(W, H) * 0.38;
+
                 const nodes = posts.map((post, i) => ({
                     id: post.id,
                     title: post.title,
                     category: post.category as import('@/types').Category,
-                    x: 300 + Math.cos((i / posts.length) * Math.PI * 2) * 120,
-                    y: 200 + Math.sin((i / posts.length) * Math.PI * 2) * 120,
+                    x: cx + Math.cos((i / posts.length) * Math.PI * 2) * r + (Math.random() - 0.5) * 40,
+                    y: cy + Math.sin((i / posts.length) * Math.PI * 2) * r + (Math.random() - 0.5) * 40,
                     vx: 0,
                     vy: 0,
                 }));
 
+                // De-duplicate edges (only source < target)
+                const edgeSet = new Set<string>();
                 const edges: GraphEdge[] = [];
                 posts.forEach((post) => {
                     post.relatedPosts?.forEach((targetId) => {
-                        if (posts.find((p) => p.id === targetId)) {
+                        if (!posts.find(p => p.id === targetId)) return;
+                        const key = [post.id, targetId].sort().join('|');
+                        if (!edgeSet.has(key)) {
+                            edgeSet.add(key);
                             edges.push({ source: post.id, target: targetId });
                         }
                     });

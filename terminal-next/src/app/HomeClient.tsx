@@ -107,7 +107,7 @@ export default function HomeClient({ posts }: HomeClientProps) {
                             Note Graph
                         </p>
                         <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                            옵시디언처럼 글들의 연결을 시각화합니다
+                            글들의 연결을 시각화합니다
                         </p>
                         <div className="mt-4 flex gap-1.5">
                             {['#22c55e', '#a855f7', '#3b82f6', '#f97316', '#06b6d4', '#ec4899', '#eab308'].map(

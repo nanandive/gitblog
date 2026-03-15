@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllPosts } from '@/lib/mdx';
+import { getAllPosts, getAutoRelatedPosts } from '@/lib/mdx';
 
 export async function GET() {
     const posts = getAllPosts();
@@ -9,6 +9,8 @@ export async function GET() {
             title: p.title,
             category: p.category,
             excerpt: p.excerpt,
+            // Include auto-computed related slugs for graph edges
+            relatedPosts: getAutoRelatedPosts(p.id, 3).map(r => r.id),
         }))
     );
 }

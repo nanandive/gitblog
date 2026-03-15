@@ -8,7 +8,9 @@ export interface BlogPost {
     excerpt: string;
     content: string;
     readingTime?: number;
-    relatedPosts?: string[];   // IDs of connected posts (for Obsidian graph)
+    tags?: string[];
+    related?: string[];        // MDX frontmatter에서 명시하는 연결 포스트 슬러그
+    relatedPosts?: string[];   // IDs of connected posts (legacy — for graph)
     thumbnail?: string;
 }
 

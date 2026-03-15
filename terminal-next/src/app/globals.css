@@ -367,3 +367,84 @@ code {
 .mdx-prose tr:last-child td {
   border-bottom: none;
 }
+
+/* ===== rehype-pretty-code — Syntax Highlighting ===== */
+
+/* shiki injects background via inline style; we only control shape/font */
+[data-rehype-pretty-code-figure] pre {
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 1.2em 1.4em;
+  overflow-x: auto;
+  font-size: 0.82rem;
+  line-height: 1.7;
+  margin: 1.4em 0;
+}
+
+
+[data-rehype-pretty-code-figure] code {
+  font-family: var(--font-jetbrains), 'Fira Code', 'Cascadia Code', monospace;
+  font-size: inherit;
+  background: none !important;
+  padding: 0;
+  color: inherit;
+  border-radius: 0;
+}
+
+
+/* Inline code — don't apply to code blocks */
+.mdx-prose :not(pre)>code {
+  font-family: var(--font-jetbrains), monospace;
+  font-size: 0.82em;
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  background-color: var(--bg-code);
+  color: var(--accent);
+}
+
+/* Code title bar (```ts title="example.ts") */
+[data-rehype-pretty-code-title] {
+  background-color: var(--bg-code);
+  border: 1px solid var(--border-subtle);
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
+  padding: 0.4em 1.2em;
+  font-size: 0.75rem;
+  font-family: var(--font-jetbrains), monospace;
+  color: var(--text-muted);
+}
+
+[data-theme="dark"] [data-rehype-pretty-code-title] {
+  background-color: #161b22;
+  border-color: #30363d;
+}
+
+[data-rehype-pretty-code-title]+pre {
+  border-radius: 0 0 10px 10px;
+}
+
+/* Highlighted lines */
+[data-highlighted-line] {
+  background-color: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-left: 2px solid var(--accent);
+  margin: 0 -1.4em;
+  padding: 0 1.4em 0 calc(1.4em - 2px);
+}
+
+/* Line numbers */
+code[data-line-numbers] {
+  counter-reset: line;
+}
+
+code[data-line-numbers] [data-line]::before {
+  counter-increment: line;
+  content: counter(line);
+  display: inline-block;
+  width: 1.5rem;
+  margin-right: 1.2rem;
+  text-align: right;
+  color: var(--text-muted);
+  opacity: 0.5;
+  font-size: 0.75em;
+  user-select: none;
+}

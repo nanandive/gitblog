@@ -51,6 +51,8 @@ export function getPostBySlug(slug: string): BlogPost | null {
             category: data.category || 'Uncategorized',
             excerpt: data.excerpt || content.slice(0, 150) + '...',
             content: content,
+            tags: data.tags || [],
+            related: data.related || [],
         };
     } catch (error) {
         console.error(`Error reading post ${slug}:`, error);
@@ -87,4 +89,40 @@ export function getAllCategories(): string[] {
     const posts = getAllPosts();
     const categories = [...new Set(posts.map(post => post.category))];
     return categories.sort();
+}
+
+/**
+ * Auto-compute related posts without requiring manual frontmatter.
+ *
+ * Scoring:
+ *   +10  same slug prefix cluster (e.g. "mysql-*" ↔ "mysql-*")
+ *   +5   same category
+ *   +2   per shared keyword in slug
+ */
+export function getAutoRelatedPosts(slug: string, limit = 4): BlogPost[] {
+    const allPosts = getAllPosts();
+    const current = allPosts.find(p => p.id === slug);
+    if (!current) return [];
+
+    const slugPrefix = (s: string) => s.split('-')[0];
+    const slugTokens = (s: string) => new Set(s.split('-').filter(t => t.length > 2));
+
+    const currentPrefix = slugPrefix(slug);
+    const currentTokens = slugTokens(slug);
+
+    return allPosts
+        .filter(p => p.id !== slug)
+        .map(p => {
+            let score = 0;
+            if (slugPrefix(p.id) === currentPrefix) score += 10;
+            if (p.category === current.category) score += 5;
+            const shared = [...slugTokens(p.id)].filter(t => currentTokens.has(t));
+            score += shared.length * 2;
+            return { post: p, score };
+        })
+        .filter(({ score }) => score > 0)
+        .sort((a, b) => b.score - a.score
+            || new Date(b.post.date).getTime() - new Date(a.post.date).getTime())
+        .map(({ post }) => post)
+        .slice(0, limit);
 }
